@@ -1,0 +1,29 @@
+{
+  "name": "gemini-web",
+  "version": "0.1.0",
+  "description": "Gemini-powered web tools — currently web search via google_search grounding",
+  "author": {
+    "name": "Wei (Jack) Sun"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/jacksunwei/jacksunwei-plugins",
+  "repository": "https://github.com/jacksunwei/jacksunwei-plugins",
+  "keywords": [
+    "mcp",
+    "gemini",
+    "vertex-ai",
+    "google-search",
+    "web-search",
+    "grounding"
+  ],
+  "mcpServers": {
+    "gemini-web": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--script",
+        "${CLAUDE_PLUGIN_ROOT}/server/server.py"
+      ]
+    }
+  }
+}

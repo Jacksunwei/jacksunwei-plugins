@@ -1,0 +1,17 @@
+{
+  "name": "jacksunwei-plugins",
+  "owner": {
+    "name": "Wei (Jack) Sun"
+  },
+  "metadata": {
+    "description": "Claude Code plugin marketplace curated by Wei (Jack) Sun",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "gemini-web",
+      "source": "./plugins/gemini-web",
+      "description": "Gemini-powered web tools — currently web search via google_search grounding"
+    }
+  ]
+}
