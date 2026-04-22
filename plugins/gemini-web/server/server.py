@@ -31,7 +31,7 @@ Auth is resolved by the google-genai SDK from the environment:
   - Gemini API mode: GOOGLE_API_KEY=<key>
 
 Plugin-specific env:
-  GEMINI_WEB_MODEL     Model ID (default: gemini-flash-latest)
+  GEMINI_WEB_MCP_MODEL     Model ID (default: gemini-flash-latest)
 """
 
 import os
@@ -42,7 +42,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("gemini-web")
 
-MODEL = os.environ.get("GEMINI_WEB_MODEL", "gemini-flash-latest")
+MODEL = os.environ.get("GEMINI_WEB_MCP_MODEL", "gemini-flash-latest")
 
 client = genai.Client()
 

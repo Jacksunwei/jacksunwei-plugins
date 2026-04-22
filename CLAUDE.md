@@ -23,7 +23,7 @@ The `google-genai` SDK auto-selects the auth path from env vars — the server i
 - `GOOGLE_API_KEY` set → Gemini API mode (individual users / AI Studio key).
 - `GOOGLE_GENAI_USE_VERTEXAI=true` + `GOOGLE_CLOUD_PROJECT` + ADC → Vertex AI mode (enterprise / Google-internal).
 
-Model is `GEMINI_WEB_MODEL` (default `gemini-flash-latest`). The model **must support `google_search` grounding** — not all Gemini models do.
+Model is `GEMINI_WEB_MCP_MODEL` (default `gemini-flash-latest`). The model **must support `google_search` grounding** — not all Gemini models do.
 
 ## Common commands
 
