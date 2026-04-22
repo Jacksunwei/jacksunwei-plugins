@@ -23,6 +23,7 @@
 
 Currently exposes:
   - web_search: web search via Gemini's google_search grounding
+  - summarize_pages: summarize one or more pages via Gemini's url_context tool
 
 Auth is resolved by the google-genai SDK from the environment:
   - Vertex AI mode: GOOGLE_GENAI_USE_VERTEXAI=true + GOOGLE_CLOUD_PROJECT
@@ -83,6 +84,63 @@ async def web_search(query: str) -> str:
     for chunk in chunks:
       if chunk.web:
         parts.append(f"- [{chunk.web.title}]({chunk.web.uri})")
+
+  return "\n".join(parts) if parts else "No results found."
+
+
+@mcp.tool()
+async def summarize_pages(urls: list[str], focus: str | None = None) -> str:
+  """Summarize one or more web pages by URL using Gemini's URL Context tool.
+
+  The model fetches each URL (HTML, PDF, JSON, plain text, or images up to
+  34 MB each, max 20 URLs per call) and returns a synthesized summary. With
+  multiple URLs the model can compare, contrast, or consolidate across them —
+  phrase `focus` accordingly (e.g. "diff the API changes" or "extract the
+  pricing tier from each").
+
+  Public URLs only: no localhost, login-gated, paywalled pages, YouTube,
+  Google Workspace docs, or other private content.
+
+  Args:
+    urls: One or more page URLs to summarize.
+    focus: Optional aspect to focus the summary on (e.g. "performance numbers",
+      "breaking changes"). Omit for a general summary.
+
+  Returns:
+    Markdown text: the summary, followed by a `Sources:` section listing each
+    URL and its retrieval status.
+  """
+  if not urls:
+    return "No URLs provided."
+
+  url_lines = "\n".join(f"- {u}" for u in urls)
+  focus_clause = f" Focus on: {focus}." if focus else ""
+  page_word = "page" if len(urls) == 1 else "pages"
+  prompt = (
+      f"Summarize the following {page_word}.{focus_clause}\n{url_lines}"
+  )
+
+  response = await client.aio.models.generate_content(
+      model=MODEL,
+      contents=prompt,
+      config=types.GenerateContentConfig(
+          tools=[types.Tool(url_context=types.UrlContext())]
+      ),
+  )
+
+  parts = []
+  if response.text:
+    parts.append(response.text)
+
+  candidate = response.candidates[0] if response.candidates else None
+  url_meta = candidate.url_context_metadata if candidate else None
+  entries = url_meta.url_metadata if url_meta else None
+  if entries:
+    parts.append("\nSources:")
+    for entry in entries:
+      url = entry.retrieved_url or "(unknown URL)"
+      status = entry.url_retrieval_status or "UNKNOWN"
+      parts.append(f"- {url} ({status})")
 
   return "\n".join(parts) if parts else "No results found."
 
