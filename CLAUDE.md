@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository purpose
 
-This repo is a **Claude Code plugin marketplace** (`jacksunwei-plugins`). It is not a single application — it is a registry of plugins, each of which ships its own MCP server. Currently it hosts one plugin: `gemini-web` (an MCP `web_search` tool backed by Gemini's `google_search` grounding).
+This repo is a **Claude Code plugin marketplace** (`jacksunwei-plugins`). It is not a single application — it is a registry of plugins, each of which ships its own MCP server. Currently it hosts one plugin: `gemini-web`, which exposes two MCP tools — `web_search` (Gemini's `google_search` grounding) and `summarize_pages` (Gemini's `url_context` tool).
 
 ## Architecture: how a plugin is wired together
 
@@ -23,7 +23,7 @@ The `google-genai` SDK auto-selects the auth path from env vars — the server i
 - `GOOGLE_API_KEY` set → Gemini API mode (individual users / AI Studio key).
 - `GOOGLE_GENAI_USE_VERTEXAI=true` + `GOOGLE_CLOUD_PROJECT` + ADC → Vertex AI mode (enterprise / Google-internal).
 
-Model is `GEMINI_WEB_MCP_MODEL` (default `gemini-flash-latest`). The model **must support `google_search` grounding** — not all Gemini models do.
+Model is `GEMINI_WEB_MCP_MODEL` (default `gemini-flash-latest`). The model **must support both `google_search` grounding and the `url_context` tool** — not all Gemini models do.
 
 ## Common commands
 
@@ -32,7 +32,7 @@ Model is `GEMINI_WEB_MCP_MODEL` (default `gemini-flash-latest`). The model **mus
 uv run --script plugins/gemini-web/server/server.py
 
 # Install this marketplace locally for end-to-end testing in Claude Code
-/plugin marketplace add /Users/jacksun/Github/gemini-mcp
+/plugin marketplace add /Users/weisun/Github/jacksunwei-plugins
 /plugin install gemini-web@jacksunwei-plugins
 ```
 
@@ -45,4 +45,5 @@ There is no test suite, linter config, or build step in this repo. Validate chan
 - **Python indentation: 2 spaces** (see `server.py`). This is unusual for Python — match it.
 - **Apache 2.0 header** on every Python source file (copyright `Wei (Jack) Sun`).
 - Keep dependencies in the PEP 723 block, **not** in a separate requirements file. The whole point of the layout is single-file deployability via `uv`.
-- Plugin descriptions in `marketplace.json`, `plugin.json`, and `README.md` should stay in sync — the marketplace table in the README is hand-maintained.
+- **Two-level README split:** the root `README.md` is marketplace-scope (plugin table, shared prerequisites only); each plugin owns `plugins/<name>/README.md` (install, auth, usage). Plugin descriptions in `marketplace.json`, `plugin.json`, and the root README's plugin table should stay in sync — all hand-maintained.
+- When adding a plugin, also create `plugins/<name>/README.md` and add a row to the root README's plugin table; set the plugin's `homepage` in `plugin.json` to the GitHub URL of its directory so the per-plugin README renders as the homepage.
