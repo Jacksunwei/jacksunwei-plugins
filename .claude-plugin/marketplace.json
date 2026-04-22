@@ -11,7 +11,7 @@
     {
       "name": "gemini-web",
       "source": "./plugins/gemini-web",
-      "description": "Gemini-powered web tools — currently web search via google_search grounding"
+      "description": "Gemini-powered web tools: search and URL summarization"
     }
   ]
 }

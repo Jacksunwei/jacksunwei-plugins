@@ -10,7 +10,7 @@ Gemini's `google_search` grounding is one of the best ways to give an LLM live, 
 
 | Plugin                               | Description                                                                |
 | ------------------------------------ | -------------------------------------------------------------------------- |
-| [`gemini-web`](./plugins/gemini-web) | Gemini-powered web tools — currently `web_search` via `google_search` grounding |
+| [`gemini-web`](./plugins/gemini-web) | Gemini-powered web tools: `web_search` (via `google_search` grounding) and `summarize_pages` (via `url_context`) |
 
 ## Install (Claude Code)
 

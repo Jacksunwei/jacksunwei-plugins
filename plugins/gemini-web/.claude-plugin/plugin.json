@@ -1,7 +1,7 @@
 {
   "name": "gemini-web",
-  "version": "0.1.0",
-  "description": "Gemini-powered web tools — currently web search via google_search grounding",
+  "version": "0.2.0",
+  "description": "Gemini-powered web tools: search and URL summarization",
   "author": {
     "name": "Wei (Jack) Sun"
   },
