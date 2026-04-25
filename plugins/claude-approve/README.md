@@ -8,7 +8,7 @@ When **disabled** (the default), nothing happens — the hook gets connection-re
 
 ## Why this exists
 
-Claude Code's built-in `auto` permission mode and the official `telegram` plugin's `claude/channel/permission` capability both require the direct Anthropic API. On Vertex AI / Bedrock / Foundry, Claude Code silently drops the relevant client-side capabilities. This plugin works around that with a `PreToolUse` HTTP hook that doesn't depend on those capabilities.
+Claude Code's built-in `auto` permission mode and the official `telegram` plugin's `claude/channel/permission` capability both require the direct Anthropic API. On Vertex AI / Bedrock / Foundry, Claude Code silently drops the relevant client-side capabilities. This plugin works around that with a `PermissionRequest` HTTP hook that doesn't depend on those capabilities — and only fires when Claude Code would have prompted you anyway, so allowlisted calls run silently.
 
 ## Setup
 
