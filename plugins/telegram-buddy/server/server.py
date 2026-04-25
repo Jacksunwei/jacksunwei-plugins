@@ -51,6 +51,7 @@ import html
 import json
 import os
 import secrets
+import tempfile
 
 from aiohttp import web
 from claude_agent_sdk.types import HookJSONOutput, PermissionRequestHookInput
@@ -63,8 +64,10 @@ HOOK_TIMEOUT_S = (
     28700  # leaves headroom under the 28800s (8h) hook timeout in plugin.json
 )
 # Crude file logging for diagnosing hook deliveries when MCP server stderr
-# is not easily reachable. Append-only; harmless if the file grows.
-LOG_PATH = "/tmp/telegram-buddy.log"
+# is not easily reachable. Append-only; harmless if the file grows. Lives
+# in the system temp dir (tempfile.gettempdir() honors $TMPDIR — on macOS
+# that's a per-user /var/folders/.../T/ path, not the shared /tmp).
+LOG_PATH = os.path.join(tempfile.gettempdir(), "telegram-buddy.log")
 
 
 def _log(msg: str) -> None:
