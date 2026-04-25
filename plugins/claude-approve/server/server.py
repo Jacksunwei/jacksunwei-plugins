@@ -64,7 +64,7 @@ state: dict = {
   "chat_id": None,
   "http_runner": None,
   "tg_app": None,
-  "pending": {},  # request_id -> asyncio.Future[str]
+  "pending": {},  # request_id -> {"future": Future[str], "text": markdown source}
   "decided": 0,
 }
 
@@ -101,18 +101,19 @@ async def _on_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
     action, rid = q.data.split(":", 1)
   except ValueError:
     return
-  fut = state["pending"].get(rid)
-  if fut and not fut.done():
+  entry = state["pending"].get(rid)
+  if entry and not entry["future"].done():
     decision = "allow" if action == "a" else "deny"
-    fut.set_result(decision)
+    entry["future"].set_result(decision)
     suffix = "✅ Approved" if decision == "allow" else "❌ Denied"
   else:
     suffix = "⏰ Expired"
-  # callback_query.message is MaybeInaccessibleMessage — only Message has .text.
-  prior = getattr(q.message, "text", None) if q.message else None
+  # Re-send the original markdown source so the codeblock keeps rendering on
+  # edit. q.message.text is plain text and would lose the formatting.
+  prior = entry["text"] if entry else None
   if prior is not None:
     try:
-      await q.edit_message_text(text=f"{prior}\n\n{suffix}")
+      await q.edit_message_text(text=f"{prior}\n\n{suffix}", parse_mode="Markdown")
     except Exception:
       pass
 
@@ -121,9 +122,9 @@ async def _handle_approve(request: web.Request) -> web.Response:
   payload = await request.json()
   rid = secrets.token_hex(3)
   fut: asyncio.Future = asyncio.get_event_loop().create_future()
-  state["pending"][rid] = fut
-
   text = _format_request(payload, rid)
+  state["pending"][rid] = {"future": fut, "text": text}
+
   keyboard = InlineKeyboardMarkup([[
     InlineKeyboardButton("✅ Approve", callback_data=f"a:{rid}"),
     InlineKeyboardButton("❌ Deny", callback_data=f"d:{rid}"),
@@ -253,7 +254,8 @@ async def disable_telegram() -> str:
   if not state["enabled"]:
     return "Not enabled."
 
-  for fut in list(state["pending"].values()):
+  for entry in list(state["pending"].values()):
+    fut = entry["future"]
     if not fut.done():
       fut.set_result("ask")
   state["pending"].clear()
