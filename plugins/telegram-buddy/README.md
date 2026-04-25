@@ -29,13 +29,27 @@ When you're back:
 
 Future prompts go back to the terminal. That's the whole loop. Check current state with `/telegram-buddy:status`.
 
+### Typical user scenarios
+
+**1. Step away mid-task.** The dishwasher's beeping, the kid needs pickup, the coffee run can't wait — and Claude is
+halfway through a long refactor. Flip on Telegram approvals, walk out the door. When Claude hits the next `git push` or
+`rm`, your phone buzzes; tap **Approve** from the sidewalk and the run keeps moving instead of stalling on an empty
+terminal until you're back.
+
+**2. Read without breaking flow.** Claude is mid-stream printing a wall of analysis you actually want to absorb. The
+moment it hits a permission prompt, the terminal yanks your focus into a modal and your reading flow shatters. With
+Telegram on, the prompt diverts to your phone — thumb-tap **Approve**, eyes never leave the scrollback.
+
 ## Why this exists
 
-Claude Code's built-in `auto` permission mode and the official `telegram` plugin's `claude/channel/permission`
-capability both require the direct Anthropic API. On Vertex AI / Bedrock / Foundry, Claude Code silently drops the
-relevant client-side capabilities. This plugin works around that with a `PermissionRequest` HTTP hook that doesn't
-depend on those capabilities — and only fires when Claude Code would have prompted you anyway, so allowlisted calls run
-silently.
+The official `telegram` plugin's `claude/channel/permission` capability (and Claude Code's `auto` mode) require the
+direct Anthropic API — on Vertex AI / Bedrock / Foundry / 3rd-party models, Claude Code drops them silently.
+telegram-buddy uses a `PermissionRequest` HTTP hook instead: works on any backend, fires only when Claude Code would
+have prompted you, so allowlisted calls stay silent.
+
+It also fits a different session shape. The official plugin extends the whole session to Telegram — input, output, and
+approvals all reachable from the phone in parallel with the terminal. telegram-buddy mirrors only the permission modal,
+so your scrollback and editor stay the sole I/O surface.
 
 ## Setup
 
