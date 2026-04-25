@@ -73,7 +73,7 @@ state: dict = {
     "chat_id": None,
     "http_runner": None,
     "tg_app": None,
-    # request_id -> {"future", "text" (HTML), "message_id", "tool_name", "input_key"}
+    # request_id -> {"future", "text" (HTML), "message_id", "input_key"}
     "pending": {},
     "decided": 0,
 }
@@ -149,18 +149,26 @@ async def _on_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
       pass
 
 
-def _input_key(tool_input) -> str:
+def _input_key(tool_name: str, tool_input) -> str:
   """Stable key for matching a PermissionRequest pending entry to a later
   PostToolUse event for the same tool call.
 
   Claude Code does not surface a stable tool_use_id in the PermissionRequest
-  payload, so we key on (tool_name, normalized tool_input). Sorted-keys JSON
-  is good enough — same tool with same args produces the same string.
+  payload, so we key on (tool_name, an identifying slice of tool_input).
+  Whole-input JSON would be brittle — PostToolUse can carry extra/normalized
+  fields that PermissionRequest doesn't (description, normalized whitespace,
+  etc.). Pick one identifying field per known tool; fall back to tool_name
+  alone for unknown tools.
   """
-  try:
-    return json.dumps(tool_input, sort_keys=True, default=str)
-  except Exception:
-    return repr(tool_input)
+  if not isinstance(tool_input, dict):
+    return tool_name
+  for field in ("command", "file_path", "url"):
+    if field in tool_input:
+      try:
+        return f"{tool_name}|{field}={json.dumps(tool_input[field], default=str)}"
+      except Exception:
+        return f"{tool_name}|{field}={tool_input[field]!r}"
+  return tool_name
 
 
 async def _handle_posttooluse(request: web.Request) -> web.Response:
@@ -176,9 +184,9 @@ async def _handle_posttooluse(request: web.Request) -> web.Response:
   except Exception:
     return web.json_response({})
   tool_name = payload.get("tool_name", "?")
-  key = _input_key(payload.get("tool_input") or {})
+  key = _input_key(tool_name, payload.get("tool_input") or {})
   for rid, entry in list(state["pending"].items()):
-    if entry.get("tool_name") != tool_name or entry.get("input_key") != key:
+    if entry.get("input_key") != key:
       continue
     await _edit_telegram(rid, "🤝 Resolved without Telegram")
     fut = entry.get("future")
@@ -246,8 +254,9 @@ async def _handle_approve(request: web.Request) -> web.Response:
       "future": fut,
       "text": text,
       "message_id": sent.message_id,
-      "tool_name": payload.get("tool_name", "?"),
-      "input_key": _input_key(payload.get("tool_input") or {}),
+      "input_key": _input_key(
+          payload.get("tool_name", "?"), payload.get("tool_input") or {}
+      ),
   }
 
   # Wait for Telegram tap, the PostToolUse cleanup (operator answered the
