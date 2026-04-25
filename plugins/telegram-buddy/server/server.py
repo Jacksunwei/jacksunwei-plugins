@@ -48,6 +48,7 @@ via explicit ${user_config.KEY} substitution in the manifest's mcpServers.env.
 
 import asyncio
 import html
+import json
 import os
 import secrets
 
@@ -72,7 +73,8 @@ state: dict = {
     "chat_id": None,
     "http_runner": None,
     "tg_app": None,
-    "pending": {},  # request_id -> {"future", "text" (HTML source), "message_id"}
+    # request_id -> {"future", "text" (HTML), "message_id", "tool_name", "input_key"}
+    "pending": {},
     "decided": 0,
 }
 
@@ -147,18 +149,45 @@ async def _on_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
       pass
 
 
-async def _wait_disconnect(request: web.Request, poll_s: float = 0.5) -> None:
-  """Sleep until the HTTP client closes the connection.
+def _input_key(tool_input) -> str:
+  """Stable key for matching a PermissionRequest pending entry to a later
+  PostToolUse event for the same tool call.
 
-  Claude Code holds the hook request open while waiting for our decision.
-  When the operator answers the parallel local prompt instead, Claude Code
-  drops the connection — that's our signal to stop waiting on Telegram.
+  Claude Code does not surface a stable tool_use_id in the PermissionRequest
+  payload, so we key on (tool_name, normalized tool_input). Sorted-keys JSON
+  is good enough — same tool with same args produces the same string.
   """
-  while True:
-    transport = request.transport
-    if transport is None or transport.is_closing():
-      return
-    await asyncio.sleep(poll_s)
+  try:
+    return json.dumps(tool_input, sort_keys=True, default=str)
+  except Exception:
+    return repr(tool_input)
+
+
+async def _handle_posttooluse(request: web.Request) -> web.Response:
+  """Cleanup endpoint for PostToolUse events.
+
+  Fires after a tool actually runs (regardless of how the permission was
+  granted: Telegram tap, local prompt, or auto-allow). For each matching
+  pending entry, edits the Telegram message to 'Handled in terminal' and
+  resolves the still-open PermissionRequest hook so it stops blocking.
+  """
+  try:
+    payload = await request.json()
+  except Exception:
+    return web.json_response({})
+  tool_name = payload.get("tool_name", "?")
+  key = _input_key(payload.get("tool_input") or {})
+  for rid, entry in list(state["pending"].items()):
+    if entry.get("tool_name") != tool_name or entry.get("input_key") != key:
+      continue
+    await _edit_telegram(rid, "🤝 Handled in terminal")
+    fut = entry.get("future")
+    if fut and not fut.done():
+      # 'ask' → empty hook response → Claude Code uses whatever decision the
+      # local flow already made. The response is moot since the tool ran.
+      fut.set_result("ask")
+    break  # one match is enough; if there are duplicates, later events drain them
+  return web.json_response({})
 
 
 async def _edit_telegram(rid: str, suffix: str) -> None:
@@ -217,28 +246,20 @@ async def _handle_approve(request: web.Request) -> web.Response:
       "future": fut,
       "text": text,
       "message_id": sent.message_id,
+      "tool_name": payload.get("tool_name", "?"),
+      "input_key": _input_key(payload.get("tool_input") or {}),
   }
 
-  # Race three outcomes: Telegram tap (fut), Claude Code dropping the HTTP
-  # request because the operator answered the parallel local prompt
-  # (disconnect_task), or the 8h hook timeout.
-  disconnect_task = asyncio.create_task(_wait_disconnect(request))
+  # Wait for Telegram tap, the PostToolUse cleanup (operator answered the
+  # local prompt and the tool ran), or the 8h hook timeout. The cleanup
+  # handler resolves the future with 'ask', which falls through to an empty
+  # hook response — by then the tool has already run, so the response is
+  # discarded by Claude Code.
   try:
-    done, _ = await asyncio.wait(
-        {fut, disconnect_task},
-        return_when=asyncio.FIRST_COMPLETED,
-        timeout=HOOK_TIMEOUT_S,
-    )
-    if fut in done:
-      decision = fut.result()
-    elif disconnect_task in done:
-      # Operator answered locally — let them know Telegram is now stale.
-      await _edit_telegram(rid, "🤝 Handled in terminal")
-      return web.json_response({})
-    else:
-      decision = "ask"  # 8h timeout — fall through to local prompt.
+    decision = await asyncio.wait_for(fut, timeout=HOOK_TIMEOUT_S)
+  except asyncio.TimeoutError:
+    decision = "ask"
   finally:
-    disconnect_task.cancel()
     state["pending"].pop(rid, None)
 
   state["decided"] += 1
@@ -307,6 +328,7 @@ async def enable_telegram() -> str:
 
   app = web.Application()
   app.router.add_post("/approve", _handle_approve)
+  app.router.add_post("/posttooluse", _handle_posttooluse)
   runner = web.AppRunner(app)
   await runner.setup()
   site = web.TCPSite(runner, "127.0.0.1", PORT)
