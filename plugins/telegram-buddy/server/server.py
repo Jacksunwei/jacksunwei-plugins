@@ -72,7 +72,7 @@ state: dict = {
     "chat_id": None,
     "http_runner": None,
     "tg_app": None,
-    "pending": {},  # request_id -> {"future": Future[str], "text": HTML source}
+    "pending": {},  # request_id -> {"future", "text" (HTML source), "message_id"}
     "decided": 0,
 }
 
@@ -147,6 +147,45 @@ async def _on_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
       pass
 
 
+async def _wait_disconnect(request: web.Request, poll_s: float = 0.5) -> None:
+  """Sleep until the HTTP client closes the connection.
+
+  Claude Code holds the hook request open while waiting for our decision.
+  When the operator answers the parallel local prompt instead, Claude Code
+  drops the connection — that's our signal to stop waiting on Telegram.
+  """
+  while True:
+    transport = request.transport
+    if transport is None or transport.is_closing():
+      return
+    await asyncio.sleep(poll_s)
+
+
+async def _edit_telegram(rid: str, suffix: str) -> None:
+  """Append a status suffix to the pending Telegram message for `rid`.
+
+  Used from outside the callback handler (e.g. when Claude Code dropped
+  the HTTP request because the operator decided locally).
+  """
+  entry = state["pending"].get(rid)
+  tg_app = state["tg_app"]
+  if not entry or tg_app is None or state["chat_id"] is None:
+    return
+  prior = entry.get("text")
+  message_id = entry.get("message_id")
+  if prior is None or message_id is None:
+    return
+  try:
+    await tg_app.bot.edit_message_text(
+        chat_id=state["chat_id"],
+        message_id=message_id,
+        text=f"{prior}\n\n{suffix}",
+        parse_mode="HTML",
+    )
+  except Exception:
+    pass
+
+
 async def _handle_approve(request: web.Request) -> web.Response:
   # Untyped at the wire (any process on localhost can POST), but the structure
   # we expect is PermissionRequestHookInput; .get()s tolerate missing fields.
@@ -154,7 +193,6 @@ async def _handle_approve(request: web.Request) -> web.Response:
   rid = secrets.token_hex(3)
   fut: asyncio.Future = asyncio.get_event_loop().create_future()
   text = _format_request(payload, rid)
-  state["pending"][rid] = {"future": fut, "text": text}
 
   keyboard = InlineKeyboardMarkup(
       [
@@ -165,22 +203,42 @@ async def _handle_approve(request: web.Request) -> web.Response:
       ]
   )
   try:
-    await state["tg_app"].bot.send_message(
+    sent = await state["tg_app"].bot.send_message(
         chat_id=state["chat_id"],
         text=text,
         reply_markup=keyboard,
         parse_mode="HTML",
     )
   except Exception:
-    state["pending"].pop(rid, None)
     # Empty body → no hook decision → Claude Code falls back to its local prompt.
     return web.json_response({})
 
+  state["pending"][rid] = {
+      "future": fut,
+      "text": text,
+      "message_id": sent.message_id,
+  }
+
+  # Race three outcomes: Telegram tap (fut), Claude Code dropping the HTTP
+  # request because the operator answered the parallel local prompt
+  # (disconnect_task), or the 8h hook timeout.
+  disconnect_task = asyncio.create_task(_wait_disconnect(request))
   try:
-    decision = await asyncio.wait_for(fut, timeout=HOOK_TIMEOUT_S)
-  except asyncio.TimeoutError:
-    decision = "ask"
+    done, _ = await asyncio.wait(
+        {fut, disconnect_task},
+        return_when=asyncio.FIRST_COMPLETED,
+        timeout=HOOK_TIMEOUT_S,
+    )
+    if fut in done:
+      decision = fut.result()
+    elif disconnect_task in done:
+      # Operator answered locally — let them know Telegram is now stale.
+      await _edit_telegram(rid, "🤝 Handled in terminal")
+      return web.json_response({})
+    else:
+      decision = "ask"  # 8h timeout — fall through to local prompt.
   finally:
+    disconnect_task.cancel()
     state["pending"].pop(rid, None)
 
   state["decided"] += 1
