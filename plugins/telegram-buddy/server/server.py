@@ -5,6 +5,7 @@
 #   "mcp[cli]>=1.27.0",
 #   "aiohttp>=3.9",
 #   "python-telegram-bot>=21.0",
+#   "claude-agent-sdk>=0.1.0",
 # ]
 # ///
 # Copyright 2026 Wei (Jack) Sun
@@ -51,6 +52,7 @@ import os
 import secrets
 
 from aiohttp import web
+from claude_agent_sdk.types import HookJSONOutput, PermissionRequestHookInput
 from mcp.server.fastmcp import FastMCP
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
@@ -93,7 +95,7 @@ def _esc(value, max_len: int = MAX_FIELD_LEN) -> str:
   return html.escape(s)
 
 
-def _format_request(payload: dict, request_id: str) -> str:
+def _format_request(payload: PermissionRequestHookInput, request_id: str) -> str:
   tool = payload.get("tool_name", "?")
   inp = payload.get("tool_input") or {}
   cwd = payload.get("cwd", "?")
@@ -146,7 +148,9 @@ async def _on_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _handle_approve(request: web.Request) -> web.Response:
-  payload = await request.json()
+  # Untyped at the wire (any process on localhost can POST), but the structure
+  # we expect is PermissionRequestHookInput; .get()s tolerate missing fields.
+  payload: PermissionRequestHookInput = await request.json()
   rid = secrets.token_hex(3)
   fut: asyncio.Future = asyncio.get_event_loop().create_future()
   text = _format_request(payload, rid)
@@ -183,7 +187,7 @@ async def _handle_approve(request: web.Request) -> web.Response:
   return web.json_response(_hook_response(decision))
 
 
-def _hook_response(decision: str) -> dict:
+def _hook_response(decision: str) -> HookJSONOutput | dict:
   """Shape a PermissionRequest hook response.
 
   - 'allow' / 'deny' → structured decision that Claude Code applies directly.
