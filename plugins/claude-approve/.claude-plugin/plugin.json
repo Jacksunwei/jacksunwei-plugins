@@ -1,6 +1,6 @@
 {
   "name": "claude-approve",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Approve Claude Code permission prompts from Telegram while away from the terminal",
   "author": {
     "name": "Wei (Jack) Sun"
@@ -38,7 +38,11 @@
         "run",
         "--script",
         "${CLAUDE_PLUGIN_ROOT}/server/server.py"
-      ]
+      ],
+      "env": {
+        "TELEGRAM_BOT_TOKEN": "${user_config.telegram_bot_token}",
+        "CLAUDE_APPROVE_CHAT_ID": "${user_config.chat_id}"
+      }
     }
   },
   "hooks": {

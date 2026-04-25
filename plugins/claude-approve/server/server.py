@@ -33,10 +33,14 @@ this server relays each request to Telegram as an inline-keyboard message
 and resolves the response with the user's tap. While "disabled", the port is
 unbound and Claude Code falls back to its local prompt.
 
-Bot token discovery (in order):
-  1. CLAUDE_PLUGIN_OPTION_TELEGRAM_BOT_TOKEN — set by the plugin's userConfig
-     prompt at install time (stored in macOS Keychain).
-  2. TELEGRAM_BOT_TOKEN env var — for standalone testing outside Claude Code.
+Bot token discovery: TELEGRAM_BOT_TOKEN env var. Inside Claude Code, this is
+populated by plugin.json's mcpServers.env from the userConfig prompt at
+install (stored in macOS Keychain). For standalone testing outside Claude
+Code, set it manually before launching the server.
+
+Note: userConfig values are NOT auto-injected as CLAUDE_PLUGIN_OPTION_<KEY>
+into MCP servers (only into hook commands). They reach the MCP server only
+via explicit ${user_config.KEY} substitution in the manifest's mcpServers.env.
 """
 
 import asyncio
@@ -64,11 +68,7 @@ state: dict = {
 
 
 def _load_token() -> str | None:
-  for var in ("CLAUDE_PLUGIN_OPTION_TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"):
-    tok = os.environ.get(var)
-    if tok:
-      return tok
-  return None
+  return os.environ.get("TELEGRAM_BOT_TOKEN") or None
 
 
 def _format_request(payload: dict, request_id: str) -> str:
@@ -171,8 +171,8 @@ async def enable_telegram(chat_id: str | None = None) -> str:
   Args:
     chat_id: Telegram chat ID for approval messages. For DMs, this is your
       Telegram user ID (message @userinfobot to find yours). Falls back to
-      the chat_id you set at plugin install time, then to the
-      CLAUDE_APPROVE_CHAT_ID env var.
+      the CLAUDE_APPROVE_CHAT_ID env var, which inside Claude Code is
+      populated from the userConfig prompt at install time.
 
   Returns:
     Status string. Errors if port is already bound (another session holds
@@ -181,11 +181,7 @@ async def enable_telegram(chat_id: str | None = None) -> str:
   if state["enabled"]:
     return f"Already enabled (chat_id={state['chat_id']}). Call disable_telegram first."
 
-  chat_id = (
-    chat_id
-    or os.environ.get("CLAUDE_PLUGIN_OPTION_CHAT_ID")
-    or os.environ.get("CLAUDE_APPROVE_CHAT_ID")
-  )
+  chat_id = chat_id or os.environ.get("CLAUDE_APPROVE_CHAT_ID")
   if not chat_id:
     return (
       "No chat_id. Reconfigure the plugin (`/plugin` → claude-approve → "
