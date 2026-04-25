@@ -60,12 +60,12 @@ HOOK_TIMEOUT_S = 290  # leaves headroom under the 300s hook timeout in plugin.js
 mcp = FastMCP("claude-approve")
 
 state: dict = {
-  "enabled": False,
-  "chat_id": None,
-  "http_runner": None,
-  "tg_app": None,
-  "pending": {},  # request_id -> {"future": Future[str], "text": markdown source}
-  "decided": 0,
+    "enabled": False,
+    "chat_id": None,
+    "http_runner": None,
+    "tg_app": None,
+    "pending": {},  # request_id -> {"future": Future[str], "text": markdown source}
+    "decided": 0,
 }
 
 
@@ -125,16 +125,20 @@ async def _handle_approve(request: web.Request) -> web.Response:
   text = _format_request(payload, rid)
   state["pending"][rid] = {"future": fut, "text": text}
 
-  keyboard = InlineKeyboardMarkup([[
-    InlineKeyboardButton("✅ Approve", callback_data=f"a:{rid}"),
-    InlineKeyboardButton("❌ Deny", callback_data=f"d:{rid}"),
-  ]])
+  keyboard = InlineKeyboardMarkup(
+      [
+          [
+              InlineKeyboardButton("✅ Approve", callback_data=f"a:{rid}"),
+              InlineKeyboardButton("❌ Deny", callback_data=f"d:{rid}"),
+          ]
+      ]
+  )
   try:
     await state["tg_app"].bot.send_message(
-      chat_id=state["chat_id"],
-      text=text,
-      reply_markup=keyboard,
-      parse_mode="Markdown",
+        chat_id=state["chat_id"],
+        text=text,
+        reply_markup=keyboard,
+        parse_mode="Markdown",
     )
   except Exception:
     state["pending"].pop(rid, None)
@@ -162,23 +166,23 @@ def _hook_response(decision: str) -> dict:
   """
   if decision == "allow":
     return {
-      "hookSpecificOutput": {
-        "hookEventName": "PermissionRequest",
-        "decision": {"behavior": "allow"},
-      }
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "allow"},
+        }
     }
   if decision == "deny":
     return {
-      "hookSpecificOutput": {
-        "hookEventName": "PermissionRequest",
-        "decision": {"behavior": "deny", "message": "Denied via Telegram"},
-      }
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "deny", "message": "Denied via Telegram"},
+        }
     }
   return {}
 
 
 @mcp.tool()
-async def enable_telegram(chat_id: str | None = None) -> str:
+async def enable_telegram() -> str:
   """Start routing Claude Code permission prompts to Telegram.
 
   Binds 127.0.0.1:8787 and starts a Telegram long-poll. While enabled, any
@@ -186,11 +190,9 @@ async def enable_telegram(chat_id: str | None = None) -> str:
   permissions allowlist) is relayed to your phone as an inline-keyboard
   message; tap Approve or Deny to decide. Allowlisted calls run silently.
 
-  Args:
-    chat_id: Telegram chat ID for approval messages. For DMs, this is your
-      Telegram user ID (message @userinfobot to find yours). Falls back to
-      the CLAUDE_APPROVE_CHAT_ID env var, which inside Claude Code is
-      populated from the userConfig prompt at install time.
+  The destination chat is taken from the CLAUDE_APPROVE_CHAT_ID env var,
+  which inside Claude Code is populated by the userConfig prompt at install
+  time (managed via /plugin → claude-approve → Configure options).
 
   Returns:
     Status string. Errors if port is already bound (another session holds
@@ -199,19 +201,19 @@ async def enable_telegram(chat_id: str | None = None) -> str:
   if state["enabled"]:
     return f"Already enabled (chat_id={state['chat_id']}). Call disable_telegram first."
 
-  chat_id = chat_id or os.environ.get("CLAUDE_APPROVE_CHAT_ID")
+  chat_id = os.environ.get("CLAUDE_APPROVE_CHAT_ID")
   if not chat_id:
     return (
-      "No chat_id. Reconfigure the plugin (`/plugin` → claude-approve → "
-      "Configure options) or pass an explicit chat_id."
+        "No chat_id. Reconfigure the plugin (`/plugin` → claude-approve → "
+        "Configure options) to set the Telegram Chat ID."
     )
 
   token = _load_token()
   if not token:
     return (
-      "No bot token. Reconfigure the plugin (`/plugin` → claude-approve → "
-      "Configure options) to set the Telegram Bot Token, or set the "
-      "TELEGRAM_BOT_TOKEN env var for standalone testing."
+        "No bot token. Reconfigure the plugin (`/plugin` → claude-approve → "
+        "Configure options) to set the Telegram Bot Token, or set the "
+        "TELEGRAM_BOT_TOKEN env var for standalone testing."
     )
 
   app = web.Application()
@@ -235,15 +237,15 @@ async def enable_telegram(chat_id: str | None = None) -> str:
     await runner.cleanup()
     return "Telegram Application has no updater (unexpected)."
   await updater.start_polling(
-    drop_pending_updates=True,
-    allowed_updates=["callback_query"],
+      drop_pending_updates=True,
+      allowed_updates=["callback_query"],
   )
 
   state.update(
-    enabled=True,
-    chat_id=str(chat_id),
-    http_runner=runner,
-    tg_app=tg_app,
+      enabled=True,
+      chat_id=str(chat_id),
+      http_runner=runner,
+      tg_app=tg_app,
   )
   return f"Enabled. Approvals route to chat {chat_id}. Listener on 127.0.0.1:{PORT}."
 
@@ -279,11 +281,11 @@ async def disable_telegram() -> str:
 async def status() -> str:
   """Report whether Telegram routing is enabled and basic counters."""
   return (
-    f"enabled={state['enabled']} "
-    f"chat_id={state['chat_id']} "
-    f"port={PORT} "
-    f"pending={len(state['pending'])} "
-    f"decided={state['decided']}"
+      f"enabled={state['enabled']} "
+      f"chat_id={state['chat_id']} "
+      f"port={PORT} "
+      f"pending={len(state['pending'])} "
+      f"decided={state['decided']}"
   )
 
 

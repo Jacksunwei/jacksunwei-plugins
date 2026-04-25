@@ -62,11 +62,11 @@ DM your bot once (any message) — Telegram requires you to initiate before a bo
 
 The plugin exposes three MCP tools. Each has a slash command wrapper for quick use; you can also call the tool by its full name or just ask Claude in plain language.
 
-| Slash command            | MCP tool           | Direct MCP name                                               | What it does                                                                                            |
-| ------------------------ | ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `/claude-approve:on`     | `enable_telegram`  | `mcp__plugin_claude-approve_claude-approve__enable_telegram`  | Bind `127.0.0.1:8787`, start the Telegram poller. Optional `chat_id` arg overrides the install default. |
-| `/claude-approve:off`    | `disable_telegram` | `mcp__plugin_claude-approve_claude-approve__disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                   |
-| `/claude-approve:status` | `status`           | `mcp__plugin_claude-approve_claude-approve__status`           | Show enabled/disabled, chat ID, port, pending count, decided count.                                     |
+| Slash command            | MCP tool           | Direct MCP name                                               | What it does                                                                                                |
+| ------------------------ | ------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `/claude-approve:on`     | `enable_telegram`  | `mcp__plugin_claude-approve_claude-approve__enable_telegram`  | Bind `127.0.0.1:8787`, start the Telegram poller. Sends to the chat ID from your install/Configure options. |
+| `/claude-approve:off`    | `disable_telegram` | `mcp__plugin_claude-approve_claude-approve__disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                       |
+| `/claude-approve:status` | `status`           | `mcp__plugin_claude-approve_claude-approve__status`           | Show enabled/disabled, chat ID, port, pending count, decided count.                                         |
 
 Tip: add the three MCP names to `permissions.allow` in `~/.claude/settings.json` so the slash commands run silently instead of prompting you to approve each invocation.
 
@@ -94,10 +94,10 @@ The bot token and chat ID are set via the plugin's install prompts (see Setup). 
 
 For **standalone testing** outside Claude Code, the server also honors these env vars as fallbacks:
 
-| Variable                 | Notes                                                      |
-| ------------------------ | ---------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`     | Bot token.                                                 |
-| `CLAUDE_APPROVE_CHAT_ID` | Default chat ID for `enable_telegram` if no arg is passed. |
+| Variable                 | Notes                                                       |
+| ------------------------ | ----------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`     | Bot token.                                                  |
+| `CLAUDE_APPROVE_CHAT_ID` | Chat ID for `enable_telegram` to send approval messages to. |
 
 ## How it works
 
