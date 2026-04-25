@@ -52,6 +52,7 @@ import json
 import os
 import secrets
 import tempfile
+from dataclasses import dataclass
 
 from aiohttp import ClientSession, web
 from claude_agent_sdk.types import HookJSONOutput, PermissionRequestHookInput
@@ -80,30 +81,19 @@ def _log(msg: str) -> None:
     pass
 
 
+# ---------- Message rendering ----------
+
 # Cap each interpolated field. Long attacker payloads otherwise push the
 # Approve/Deny buttons off-screen on mobile.
 MAX_FIELD_LEN = 1024
 
-mcp = FastMCP("telegram-buddy")
-
-state: dict = {
-    "enabled": False,
-    "chat_id": None,
-    # The Claude Code session_id that called enable_telegram. Hook payloads
-    # carry session_id; we filter so only the owning session's tool calls get
-    # routed through Telegram. Other sessions get a silent local prompt
-    # fallback (see S3 in the design table).
-    "owner_session_id": None,
-    "http_runner": None,
-    "tg_app": None,
-    # request_id -> {"future", "text" (HTML), "message_id", "input_key"}
-    "pending": {},
-    "decided": 0,
-}
-
-
-def _load_token() -> str | None:
-  return os.environ.get("TELEGRAM_BOT_TOKEN") or None
+# Suffix labels appended to the original Telegram message body once a request
+# resolves. All literal-safe (✅/❌/⏰/🤝 + ASCII); if you ever interpolate
+# user content into one of these, route it through _esc() first.
+SUFFIX_APPROVED = "✅ Approved"
+SUFFIX_DENIED = "❌ Denied"
+SUFFIX_EXPIRED = "⏰ Expired"
+SUFFIX_RESOLVED_LOCALLY = "🤝 Resolved without Telegram"
 
 
 def _esc(value, max_len: int = MAX_FIELD_LEN) -> str:
@@ -140,38 +130,6 @@ def _format_request(payload: PermissionRequestHookInput, request_id: str) -> str
   )
 
 
-async def _on_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
-  q = update.callback_query
-  if not q or not q.data:
-    return
-  await q.answer()
-  # Only the chat owner can decide. Defensive even though the inline keyboard
-  # is only sent to chat_id and Telegram doesn't allow forwarding it intact.
-  if state["chat_id"] and q.from_user and str(q.from_user.id) != str(state["chat_id"]):
-    return
-  try:
-    action, rid = q.data.split(":", 1)
-  except ValueError:
-    return
-  entry = state["pending"].get(rid)
-  if entry and not entry["future"].done():
-    decision = "allow" if action == "a" else "deny"
-    entry["future"].set_result(decision)
-    suffix = "✅ Approved" if decision == "allow" else "❌ Denied"
-  else:
-    suffix = "⏰ Expired"
-  # Re-send the original HTML source so the formatting persists on edit.
-  # q.message.text is plain text and would lose it. The suffix is a literal
-  # safe string (✅/❌/⏰) so no escaping needed; if you ever interpolate
-  # user content into it, run it through _esc().
-  prior = entry["text"] if entry else None
-  if prior is not None:
-    try:
-      await q.edit_message_text(text=f"{prior}\n\n{suffix}", parse_mode="HTML")
-    except Exception:
-      pass
-
-
 def _input_key(tool_name: str, tool_input) -> str:
   """Stable key for matching a PermissionRequest pending entry to a later
   PostToolUse event for the same tool call.
@@ -192,128 +150,6 @@ def _input_key(tool_name: str, tool_input) -> str:
       except Exception:
         return f"{tool_name}|{field}={tool_input[field]!r}"
   return tool_name
-
-
-async def _handle_posttooluse(request: web.Request) -> web.Response:
-  """Cleanup endpoint for PostToolUse events.
-
-  Fires after a tool actually runs (regardless of how the permission was
-  granted: Telegram tap, local prompt, or auto-allow). For each matching
-  pending entry, edits the Telegram message to 'Handled in terminal' and
-  resolves the still-open PermissionRequest hook so it stops blocking.
-  """
-  try:
-    payload = await request.json()
-  except Exception as e:
-    _log(f"posttooluse: failed to parse json: {e}")
-    return web.json_response({})
-  caller = payload.get("session_id")
-  if caller != state["owner_session_id"]:
-    # S3: not our session — silently ignore so this hook doesn't disturb
-    # other Claude Code sessions running in parallel.
-    return web.json_response({})
-  tool_name = payload.get("tool_name", "?")
-  key = _input_key(tool_name, payload.get("tool_input") or {})
-  pending_keys = [e.get("input_key") for e in state["pending"].values()]
-  _log(
-      f"posttooluse: tool={tool_name} key={key!r} "
-      f"pending={len(state['pending'])} pending_keys={pending_keys}"
-  )
-  for rid, entry in list(state["pending"].items()):
-    if entry.get("input_key") != key:
-      continue
-    _log(f"posttooluse: matched rid={rid}")
-    await _edit_telegram(rid, "🤝 Resolved without Telegram")
-    fut = entry.get("future")
-    if fut and not fut.done():
-      # 'ask' → empty hook response → Claude Code uses whatever decision the
-      # local flow already made. The response is moot since the tool ran.
-      fut.set_result("ask")
-    break  # one match is enough; if there are duplicates, later events drain them
-  return web.json_response({})
-
-
-async def _edit_telegram(rid: str, suffix: str) -> None:
-  """Append a status suffix to the pending Telegram message for `rid`.
-
-  Used from outside the callback handler (e.g. when Claude Code dropped
-  the HTTP request because the operator decided locally).
-  """
-  entry = state["pending"].get(rid)
-  tg_app = state["tg_app"]
-  if not entry or tg_app is None or state["chat_id"] is None:
-    return
-  prior = entry.get("text")
-  message_id = entry.get("message_id")
-  if prior is None or message_id is None:
-    return
-  try:
-    await tg_app.bot.edit_message_text(
-        chat_id=state["chat_id"],
-        message_id=message_id,
-        text=f"{prior}\n\n{suffix}",
-        parse_mode="HTML",
-    )
-  except Exception:
-    pass
-
-
-async def _handle_approve(request: web.Request) -> web.Response:
-  # Untyped at the wire (any process on localhost can POST), but the structure
-  # we expect is PermissionRequestHookInput; .get()s tolerate missing fields.
-  payload: PermissionRequestHookInput = await request.json()
-  caller = payload.get("session_id")
-  if caller != state["owner_session_id"]:
-    # S3: not our session — return empty hook output so Claude Code falls
-    # back to its default permission flow (i.e., local prompt for the
-    # non-owner session). Non-owner sessions never see Telegram.
-    return web.json_response({})
-  rid = secrets.token_hex(3)
-  fut: asyncio.Future = asyncio.get_event_loop().create_future()
-  text = _format_request(payload, rid)
-
-  keyboard = InlineKeyboardMarkup(
-      [
-          [
-              InlineKeyboardButton("✅ Approve", callback_data=f"a:{rid}"),
-              InlineKeyboardButton("❌ Deny", callback_data=f"d:{rid}"),
-          ]
-      ]
-  )
-  try:
-    sent = await state["tg_app"].bot.send_message(
-        chat_id=state["chat_id"],
-        text=text,
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-  except Exception:
-    # Empty body → no hook decision → Claude Code falls back to its local prompt.
-    return web.json_response({})
-
-  state["pending"][rid] = {
-      "future": fut,
-      "text": text,
-      "message_id": sent.message_id,
-      "input_key": _input_key(
-          payload.get("tool_name", "?"), payload.get("tool_input") or {}
-      ),
-  }
-
-  # Wait for Telegram tap, the PostToolUse cleanup (operator answered the
-  # local prompt and the tool ran), or the 8h hook timeout. The cleanup
-  # handler resolves the future with 'ask', which falls through to an empty
-  # hook response — by then the tool has already run, so the response is
-  # discarded by Claude Code.
-  try:
-    decision = await asyncio.wait_for(fut, timeout=HOOK_TIMEOUT_S)
-  except asyncio.TimeoutError:
-    decision = "ask"
-  finally:
-    state["pending"].pop(rid, None)
-
-  state["decided"] += 1
-  return web.json_response(_hook_response(decision))
 
 
 def _hook_response(decision: str) -> HookJSONOutput | dict:
@@ -341,110 +177,418 @@ def _hook_response(decision: str) -> HookJSONOutput | dict:
   return {}
 
 
-async def _handle_who(_request: web.Request) -> web.Response:
-  """Returns the identity of whoever currently owns the bridge.
-
-  Used by other Claude Code sessions' enable_telegram (S5 take-over flow)
-  to learn who has the listener before requesting handover.
-  """
-  return web.json_response(
-      {
-          "owner_session_id": state["owner_session_id"],
-          "pid": os.getpid(),
-      }
-  )
+# ---------- Bridge state ----------
 
 
-async def _handle_release(_request: web.Request) -> web.Response:
-  """Handover endpoint (S5): another session is taking over.
+@dataclass
+class PendingApproval:
+  """A PermissionRequest awaiting resolution.
 
-  Schedules listener shutdown after the response flies so the requester
-  can immediately retry bind. The caller is trusted (localhost-only,
-  same-uid).
+  - future: resolved by the Telegram callback (allow/deny), the PostToolUse
+    cleanup (ask), or the 8h timeout.
+  - text: the original HTML body, kept around so we can re-render it with a
+    status suffix on edit (Telegram only exposes plain text via callbacks).
+  - message_id: Telegram message we sent for this request, needed to edit it.
+  - input_key: stable matching key (see _input_key) for cross-referencing
+    against the later PostToolUse event for the same tool call.
   """
 
-  async def shutdown_after_response():
-    await asyncio.sleep(0.1)  # let the OK response fly first
-    await _shutdown_listener()
-
-  asyncio.create_task(shutdown_after_response())
-  return web.json_response({"ok": True})
+  future: asyncio.Future
+  text: str
+  message_id: int
+  input_key: str
 
 
-async def _shutdown_listener() -> None:
-  """Common teardown: stops Telegram poller, closes HTTP listener,
-  resolves pending Futures with 'ask', clears state. Used by both
-  disable_telegram and the /release handover."""
-  if not state["enabled"]:
-    return
-  for entry in list(state["pending"].values()):
-    fut = entry["future"]
-    if not fut.done():
-      fut.set_result("ask")
-  state["pending"].clear()
+class TelegramBridge:
+  """Owns the listener + Telegram poller + pending-request map.
 
-  tg = state["tg_app"]
-  try:
-    if tg is not None and tg.updater is not None:
-      await tg.updater.stop()
-    if tg is not None:
-      await tg.stop()
-      await tg.shutdown()
-  except Exception:
-    pass
-
-  if state["http_runner"] is not None:
-    await state["http_runner"].cleanup()
-
-  state.update(
-      enabled=False,
-      chat_id=None,
-      owner_session_id=None,
-      http_runner=None,
-      tg_app=None,
-  )
-
-
-async def _ensure_port_free(_session_id: str) -> str | None:
-  """If port PORT is bound by another listener, ask it to release (S5).
-
-  Returns None on success (port is free or was freed). Returns an error
-  string if the existing listener doesn't respond to /release.
+  Single instance per process. MCP tools and HTTP handlers are thin wrappers
+  that delegate here so the state and lifecycle stay in one place.
   """
-  base = f"http://127.0.0.1:{PORT}"
-  try:
-    async with ClientSession() as client:
-      # /who is purely informational — log who we're displacing.
+
+  def __init__(self) -> None:
+    self.enabled: bool = False
+    self.chat_id: str | None = None
+    # The Claude Code session_id that called enable_telegram. Hook payloads
+    # carry session_id; we filter so only the owning session's tool calls get
+    # routed through Telegram. Other sessions get a silent local prompt
+    # fallback (see S3 in the design table).
+    self.owner_session_id: str | None = None
+    self.http_runner: web.AppRunner | None = None
+    self.tg_app: Application | None = None
+    self.pending: dict[str, PendingApproval] = {}
+    self.decided: int = 0
+
+  # ---- Telegram callback ----
+
+  async def on_callback(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    if not q or not q.data:
+      return
+    await q.answer()
+    # Only the chat owner can decide. Defensive even though the inline keyboard
+    # is only sent to chat_id and Telegram doesn't allow forwarding it intact.
+    if self.chat_id and q.from_user and str(q.from_user.id) != str(self.chat_id):
+      return
+    try:
+      action, rid = q.data.split(":", 1)
+    except ValueError:
+      return
+    entry = self.pending.get(rid)
+    if entry and not entry.future.done():
+      decision = "allow" if action == "a" else "deny"
+      entry.future.set_result(decision)
+      suffix = SUFFIX_APPROVED if decision == "allow" else SUFFIX_DENIED
+    else:
+      suffix = SUFFIX_EXPIRED
+    # Re-send the original HTML source so the formatting persists on edit.
+    # q.message.text is plain text and would lose it.
+    prior = entry.text if entry else None
+    if prior is not None:
       try:
+        await q.edit_message_text(text=f"{prior}\n\n{suffix}", parse_mode="HTML")
+      except Exception:
+        pass
+
+  # ---- HTTP handlers ----
+
+  async def handle_approve(self, request: web.Request) -> web.Response:
+    # Untyped at the wire (any process on localhost can POST), but the structure
+    # we expect is PermissionRequestHookInput; .get()s tolerate missing fields.
+    payload: PermissionRequestHookInput = await request.json()
+    caller = payload.get("session_id")
+    if caller != self.owner_session_id:
+      # S3: not our session — return empty hook output so Claude Code falls
+      # back to its default permission flow (i.e., local prompt for the
+      # non-owner session). Non-owner sessions never see Telegram.
+      return web.json_response({})
+    if self.tg_app is None or self.chat_id is None:
+      # Should be unreachable while the listener is bound (enable() sets both
+      # before site.start()), but narrows types for the rest of this handler.
+      return web.json_response({})
+    rid = secrets.token_hex(3)
+    fut: asyncio.Future = asyncio.get_event_loop().create_future()
+    text = _format_request(payload, rid)
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Approve", callback_data=f"a:{rid}"),
+                InlineKeyboardButton("❌ Deny", callback_data=f"d:{rid}"),
+            ]
+        ]
+    )
+    try:
+      sent = await self.tg_app.bot.send_message(
+          chat_id=self.chat_id,
+          text=text,
+          reply_markup=keyboard,
+          parse_mode="HTML",
+      )
+    except Exception:
+      # Empty body → no hook decision → Claude Code falls back to its local prompt.
+      return web.json_response({})
+
+    self.pending[rid] = PendingApproval(
+        future=fut,
+        text=text,
+        message_id=sent.message_id,
+        input_key=_input_key(
+            payload.get("tool_name", "?"), payload.get("tool_input") or {}
+        ),
+    )
+
+    # Wait for Telegram tap, the PostToolUse cleanup (operator answered the
+    # local prompt and the tool ran), or the 8h hook timeout. The cleanup
+    # handler resolves the future with 'ask', which falls through to an empty
+    # hook response — by then the tool has already run, so the response is
+    # discarded by Claude Code.
+    try:
+      decision = await asyncio.wait_for(fut, timeout=HOOK_TIMEOUT_S)
+    except asyncio.TimeoutError:
+      decision = "ask"
+    finally:
+      self.pending.pop(rid, None)
+
+    self.decided += 1
+    return web.json_response(_hook_response(decision))
+
+  async def handle_posttooluse(self, request: web.Request) -> web.Response:
+    """Cleanup endpoint for PostToolUse events.
+
+    Fires after a tool actually runs (regardless of how the permission was
+    granted: Telegram tap, local prompt, or auto-allow). For each matching
+    pending entry, edits the Telegram message to 'Resolved without Telegram'
+    and resolves the still-open PermissionRequest hook so it stops blocking.
+    """
+    try:
+      payload = await request.json()
+    except Exception as e:
+      _log(f"posttooluse: failed to parse json: {e}")
+      return web.json_response({})
+    caller = payload.get("session_id")
+    if caller != self.owner_session_id:
+      # S3: not our session — silently ignore so this hook doesn't disturb
+      # other Claude Code sessions running in parallel.
+      return web.json_response({})
+    tool_name = payload.get("tool_name", "?")
+    key = _input_key(tool_name, payload.get("tool_input") or {})
+    pending_keys = [e.input_key for e in self.pending.values()]
+    _log(
+        f"posttooluse: tool={tool_name} key={key!r} "
+        f"pending={len(self.pending)} pending_keys={pending_keys}"
+    )
+    for rid, entry in list(self.pending.items()):
+      if entry.input_key != key:
+        continue
+      _log(f"posttooluse: matched rid={rid}")
+      await self._edit_message(rid, SUFFIX_RESOLVED_LOCALLY)
+      if not entry.future.done():
+        # 'ask' → empty hook response → Claude Code uses whatever decision the
+        # local flow already made. The response is moot since the tool ran.
+        entry.future.set_result("ask")
+      break  # one match is enough; if there are duplicates, later events drain them
+    return web.json_response({})
+
+  async def handle_who(self, _request: web.Request) -> web.Response:
+    """Returns the identity of whoever currently owns the bridge.
+
+    Used by other Claude Code sessions' enable_telegram (S5 take-over flow)
+    to learn who has the listener before requesting handover.
+    """
+    return web.json_response(
+        {
+            "owner_session_id": self.owner_session_id,
+            "pid": os.getpid(),
+        }
+    )
+
+  async def handle_release(self, _request: web.Request) -> web.Response:
+    """Handover endpoint (S5): another session is taking over.
+
+    Schedules listener shutdown after the response flies so the requester
+    can immediately retry bind. The caller is trusted (localhost-only,
+    same-uid).
+    """
+
+    async def shutdown_after_response():
+      await asyncio.sleep(0.1)  # let the OK response fly first
+      await self._shutdown()
+
+    asyncio.create_task(shutdown_after_response())
+    return web.json_response({"ok": True})
+
+  # ---- Lifecycle (called by MCP tools) ----
+
+  async def enable(self, session_id: str) -> str:
+    if self.enabled and self.owner_session_id == session_id:
+      return f"Already enabled (chat_id={self.chat_id})."
+    if self.enabled and self.owner_session_id != session_id:
+      return (
+          "This MCP server is already bound to a different session. "
+          "Call disable_telegram first to clear local state."
+      )
+
+    chat_id = os.environ.get("TELEGRAM_BUDDY_CHAT_ID")
+    if not chat_id:
+      return (
+          "No chat_id. Reconfigure the plugin (`/plugin` → telegram-buddy → "
+          "Configure options) to set the Telegram Chat ID."
+      )
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+      return (
+          "No bot token. Reconfigure the plugin (`/plugin` → telegram-buddy → "
+          "Configure options) to set the Telegram Bot Token, or set the "
+          "TELEGRAM_BOT_TOKEN env var for standalone testing."
+      )
+
+    # S5 take-over: if port is held by another listener, ask it to release.
+    takeover_err = await self._ensure_port_free()
+    if takeover_err:
+      return f"Take-over failed: {takeover_err}"
+
+    app = web.Application()
+    app.router.add_post("/approve", self.handle_approve)
+    app.router.add_post("/posttooluse", self.handle_posttooluse)
+    app.router.add_get("/who", self.handle_who)
+    app.router.add_post("/release", self.handle_release)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", PORT)
+    try:
+      await site.start()
+    except OSError as e:
+      await runner.cleanup()
+      return f"Could not bind port {PORT}: {e}."
+
+    tg_app = Application.builder().token(token).build()
+    tg_app.add_handler(CallbackQueryHandler(self.on_callback))
+    await tg_app.initialize()
+    await tg_app.start()
+    updater = tg_app.updater
+    if updater is None:
+      await tg_app.shutdown()
+      await runner.cleanup()
+      return "Telegram Application has no updater (unexpected)."
+    await updater.start_polling(
+        drop_pending_updates=True,
+        allowed_updates=["callback_query"],
+    )
+
+    self.enabled = True
+    self.chat_id = str(chat_id)
+    self.owner_session_id = session_id
+    self.http_runner = runner
+    self.tg_app = tg_app
+    return (
+        f"Enabled. Approvals route to chat {chat_id}. " f"Listener on 127.0.0.1:{PORT}."
+    )
+
+  async def disable(self, session_id: str) -> str:
+    # Case (a): we are the listener owner. Normal shutdown.
+    if self.enabled and self.owner_session_id == session_id:
+      await self._shutdown()
+      return "Disabled. Hooks will fall back to local prompts."
+
+    # Case (b): local state inconsistent — we think we're enabled but for
+    # another session. Treat as "we were taken over" and clear local state.
+    if self.enabled and self.owner_session_id != session_id:
+      self._clear()
+      return "Local state cleared (was bound to a different session)."
+
+    # Case (c): nothing locally — but maybe a stale registration with the
+    # active listener? Check.
+    base = f"http://127.0.0.1:{PORT}"
+    try:
+      async with ClientSession() as client:
         async with client.get(f"{base}/who", timeout=2) as resp:
           info = await resp.json()
-          _log(
-              f"ensure_port_free: existing listener pid={info.get('pid')}"
-              f" owner={info.get('owner_session_id')}"
-          )
-      except Exception:
-        # No listener responding on /who → port is probably free or held by
-        # something that isn't us. Either way, let the bind try report.
-        return None
-      try:
-        async with client.post(f"{base}/release", timeout=2) as resp:
-          await resp.read()
-      except Exception as e:
-        return f"Existing listener didn't accept /release: {e}"
-  except Exception as e:
-    return f"Could not contact existing listener: {e}"
+        owner = info.get("owner_session_id")
+        if owner == session_id:
+          # Stale: listener thinks we own it but our state says otherwise.
+          # Send /release so it cleans up.
+          async with client.post(f"{base}/release", timeout=2) as r:
+            await r.read()
+          return "Released stale listener registration."
+        preview = (owner[:8] + "…") if owner else "?"
+        return (
+            f"Not your bridge to disable; the active listener is owned by "
+            f"another session ({preview})."
+        )
+    except Exception:
+      return "Not enabled. Nothing to do."
 
-  # Wait for the port to actually free (the previous listener does shutdown
-  # asynchronously; OS may also leave the socket in TIME_WAIT briefly).
-  for _ in range(40):  # up to 2s
+  def status_string(self) -> str:
+    return (
+        f"enabled={self.enabled} "
+        f"chat_id={self.chat_id} "
+        f"port={PORT} "
+        f"pending={len(self.pending)} "
+        f"decided={self.decided}"
+    )
+
+  # ---- Internal helpers ----
+
+  async def _edit_message(self, rid: str, suffix: str) -> None:
+    """Append a status suffix to the pending Telegram message for `rid`.
+
+    Used from outside the callback handler (e.g. when Claude Code dropped
+    the HTTP request because the operator decided locally).
+    """
+    entry = self.pending.get(rid)
+    if not entry or self.tg_app is None or self.chat_id is None:
+      return
     try:
-      _, writer = await asyncio.open_connection("127.0.0.1", PORT)
-      writer.close()
-      await writer.wait_closed()
-    except (ConnectionRefusedError, OSError):
-      return None  # port is free
-    await asyncio.sleep(0.05)
-  return f"Port {PORT} still in use after take-over request"
+      await self.tg_app.bot.edit_message_text(
+          chat_id=self.chat_id,
+          message_id=entry.message_id,
+          text=f"{entry.text}\n\n{suffix}",
+          parse_mode="HTML",
+      )
+    except Exception:
+      pass
+
+  async def _shutdown(self) -> None:
+    """Stops Telegram poller, closes HTTP listener, resolves pending Futures
+    with 'ask', clears state. Used by both disable and the /release handover.
+    """
+    if not self.enabled:
+      return
+    for entry in list(self.pending.values()):
+      if not entry.future.done():
+        entry.future.set_result("ask")
+    self.pending.clear()
+
+    tg = self.tg_app
+    try:
+      if tg is not None and tg.updater is not None:
+        await tg.updater.stop()
+      if tg is not None:
+        await tg.stop()
+        await tg.shutdown()
+    except Exception:
+      pass
+
+    if self.http_runner is not None:
+      await self.http_runner.cleanup()
+
+    self._clear()
+
+  def _clear(self) -> None:
+    self.enabled = False
+    self.chat_id = None
+    self.owner_session_id = None
+    self.http_runner = None
+    self.tg_app = None
+
+  async def _ensure_port_free(self) -> str | None:
+    """If port PORT is bound by another listener, ask it to release (S5).
+
+    Returns None on success (port is free or was freed). Returns an error
+    string if the existing listener doesn't respond to /release.
+    """
+    base = f"http://127.0.0.1:{PORT}"
+    try:
+      async with ClientSession() as client:
+        # /who is purely informational — log who we're displacing.
+        try:
+          async with client.get(f"{base}/who", timeout=2) as resp:
+            info = await resp.json()
+            _log(
+                f"ensure_port_free: existing listener pid={info.get('pid')}"
+                f" owner={info.get('owner_session_id')}"
+            )
+        except Exception:
+          # No listener responding on /who → port is probably free or held by
+          # something that isn't us. Either way, let the bind try report.
+          return None
+        try:
+          async with client.post(f"{base}/release", timeout=2) as resp:
+            await resp.read()
+        except Exception as e:
+          return f"Existing listener didn't accept /release: {e}"
+    except Exception as e:
+      return f"Could not contact existing listener: {e}"
+
+    # Wait for the port to actually free (the previous listener does shutdown
+    # asynchronously; OS may also leave the socket in TIME_WAIT briefly).
+    for _ in range(40):  # up to 2s
+      try:
+        _, writer = await asyncio.open_connection("127.0.0.1", PORT)
+        writer.close()
+        await writer.wait_closed()
+      except (ConnectionRefusedError, OSError):
+        return None  # port is free
+      await asyncio.sleep(0.05)
+    return f"Port {PORT} still in use after take-over request"
+
+
+# ---------- MCP wiring ----------
+
+mcp = FastMCP("telegram-buddy")
+_bridge = TelegramBridge()
 
 
 @mcp.tool()
@@ -469,72 +613,7 @@ async def enable_telegram(session_id: str) -> str:
   Returns:
     Status string.
   """
-  if state["enabled"] and state["owner_session_id"] == session_id:
-    return f"Already enabled (chat_id={state['chat_id']})."
-  if state["enabled"] and state["owner_session_id"] != session_id:
-    return (
-        "This MCP server is already bound to a different session. "
-        "Call disable_telegram first to clear local state."
-    )
-
-  chat_id = os.environ.get("TELEGRAM_BUDDY_CHAT_ID")
-  if not chat_id:
-    return (
-        "No chat_id. Reconfigure the plugin (`/plugin` → telegram-buddy → "
-        "Configure options) to set the Telegram Chat ID."
-    )
-
-  token = _load_token()
-  if not token:
-    return (
-        "No bot token. Reconfigure the plugin (`/plugin` → telegram-buddy → "
-        "Configure options) to set the Telegram Bot Token, or set the "
-        "TELEGRAM_BOT_TOKEN env var for standalone testing."
-    )
-
-  # S5 take-over: if port is held by another listener, ask it to release.
-  takeover_err = await _ensure_port_free(session_id)
-  if takeover_err:
-    return f"Take-over failed: {takeover_err}"
-
-  app = web.Application()
-  app.router.add_post("/approve", _handle_approve)
-  app.router.add_post("/posttooluse", _handle_posttooluse)
-  app.router.add_get("/who", _handle_who)
-  app.router.add_post("/release", _handle_release)
-  runner = web.AppRunner(app)
-  await runner.setup()
-  site = web.TCPSite(runner, "127.0.0.1", PORT)
-  try:
-    await site.start()
-  except OSError as e:
-    await runner.cleanup()
-    return f"Could not bind port {PORT}: {e}."
-
-  tg_app = Application.builder().token(token).build()
-  tg_app.add_handler(CallbackQueryHandler(_on_callback))
-  await tg_app.initialize()
-  await tg_app.start()
-  updater = tg_app.updater
-  if updater is None:
-    await tg_app.shutdown()
-    await runner.cleanup()
-    return "Telegram Application has no updater (unexpected)."
-  await updater.start_polling(
-      drop_pending_updates=True,
-      allowed_updates=["callback_query"],
-  )
-
-  state.update(
-      enabled=True,
-      chat_id=str(chat_id),
-      owner_session_id=session_id,
-      http_runner=runner,
-      tg_app=tg_app,
-  )
-  return (
-      f"Enabled. Approvals route to chat {chat_id}. " f"Listener on 127.0.0.1:{PORT}."
-  )
+  return await _bridge.enable(session_id)
 
 
 @mcp.tool()
@@ -555,56 +634,13 @@ async def disable_telegram(session_id: str) -> str:
     session_id: The current Claude Code session_id (supplied by the
       /telegram-buddy:off slash command via ${CLAUDE_SESSION_ID}).
   """
-  # Case (a): we are the listener owner. Normal shutdown.
-  if state["enabled"] and state["owner_session_id"] == session_id:
-    await _shutdown_listener()
-    return "Disabled. Hooks will fall back to local prompts."
-
-  # Case (b): local state inconsistent — we think we're enabled but for
-  # another session. Treat as "we were taken over" and clear local state.
-  if state["enabled"] and state["owner_session_id"] != session_id:
-    state.update(
-        enabled=False,
-        chat_id=None,
-        owner_session_id=None,
-        http_runner=None,
-        tg_app=None,
-    )
-    return "Local state cleared (was bound to a different session)."
-
-  # Case (c): nothing locally — but maybe a stale registration with the
-  # active listener? Check.
-  base = f"http://127.0.0.1:{PORT}"
-  try:
-    async with ClientSession() as client:
-      async with client.get(f"{base}/who", timeout=2) as resp:
-        info = await resp.json()
-      owner = info.get("owner_session_id")
-      if owner == session_id:
-        # Stale: listener thinks we own it but our state says otherwise.
-        # Send /release so it cleans up.
-        async with client.post(f"{base}/release", timeout=2) as r:
-          await r.read()
-        return "Released stale listener registration."
-      preview = (owner[:8] + "…") if owner else "?"
-      return (
-          f"Not your bridge to disable; the active listener is owned by "
-          f"another session ({preview})."
-      )
-  except Exception:
-    return "Not enabled. Nothing to do."
+  return await _bridge.disable(session_id)
 
 
 @mcp.tool()
 async def status() -> str:
   """Report whether Telegram routing is enabled and basic counters."""
-  return (
-      f"enabled={state['enabled']} "
-      f"chat_id={state['chat_id']} "
-      f"port={PORT} "
-      f"pending={len(state['pending'])} "
-      f"decided={state['decided']}"
-  )
+  return _bridge.status_string()
 
 
 if __name__ == "__main__":
