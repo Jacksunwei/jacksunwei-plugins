@@ -20,7 +20,8 @@ See each plugin's README for auth, configuration, and usage details.
 Then install individual plugins:
 
 ```bash
-/plugin install <plugin-name>@jacksunwei-plugins
+/plugin install gemini-web@jacksunwei-plugins
+/plugin install telegram-buddy@jacksunwei-plugins
 ```
 
 ## Prerequisites
