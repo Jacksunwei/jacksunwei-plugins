@@ -1,35 +1,33 @@
 # jacksunwei-plugins
 
-Claude Code plugin marketplace curated by Wei (Jack) Sun.
+A small, opinionated marketplace of Claude Code plugins by Wei (Jack) Sun. Each plugin is single-file Python that runs
+via [`uv`](https://docs.astral.sh/uv/) — minimal install footprint, works on any Claude Code backend (direct Anthropic
+API, Vertex AI, Bedrock, third-party Anthropic providers).
 
 ## Plugins
 
-| Plugin                                       | Description                                                                                                      |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| [`gemini-web`](./plugins/gemini-web)         | Gemini-powered web tools: `web_search` (via `google_search` grounding) and `summarize_pages` (via `url_context`) |
-| [`telegram-buddy`](./plugins/telegram-buddy) | Approve Claude Code permission prompts from Telegram while away from the terminal                                |
+| Plugin                                        | What it does                                                                                                                      |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| [`gemini-web`](./plugins/gemini-web/)         | **Real Google Search inside Claude Code, with cited sources** — via Gemini's `google_search` grounding + multi-URL summarization. |
+| [`telegram-buddy`](./plugins/telegram-buddy/) | **Approve Claude Code permission prompts from your phone** — routes prompts to a Telegram chat while you're away from the desk.   |
 
-See each plugin's README for auth, configuration, and usage details.
-
-## Install the marketplace
+## Install
 
 ```bash
 /plugin marketplace add jacksunwei/jacksunwei-plugins
-```
-
-Then install individual plugins:
-
-```bash
 /plugin install gemini-web@jacksunwei-plugins
 /plugin install telegram-buddy@jacksunwei-plugins
 ```
 
+See each plugin's README for auth, configuration, and usage details.
+
 ## Prerequisites
 
-**`uv`** on `PATH` — [install](https://docs.astral.sh/uv/getting-started/installation/). Plugins in this marketplace run
-their MCP servers with `uv run --script`, which auto-installs Python deps from PEP 723 inline metadata on first run.
+**[`uv`](https://docs.astral.sh/uv/getting-started/installation/)** on `PATH`. Plugins run their MCP servers with
+`uv run --script`, which auto-installs Python deps from PEP 723 inline metadata on first launch — no separate
+`requirements.txt` or virtualenv to manage.
 
-Plugin-specific prerequisites (auth, env vars, API access) are documented in each plugin's README.
+Plugin-specific prereqs (API keys, OAuth, tokens) are in each plugin's README.
 
 ## License
 
