@@ -1,6 +1,6 @@
 {
   "name": "telegram-buddy",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Approve Claude Code permission prompts from Telegram while away from the terminal",
   "author": {
     "name": "Wei (Jack) Sun"
@@ -53,7 +53,7 @@
           {
             "type": "http",
             "url": "http://localhost:8787/approve",
-            "timeout": 300
+            "timeout": 28800
           }
         ]
       }

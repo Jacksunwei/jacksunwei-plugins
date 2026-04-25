@@ -55,7 +55,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 PORT = 8787
-HOOK_TIMEOUT_S = 290  # leaves headroom under the 300s hook timeout in plugin.json
+HOOK_TIMEOUT_S = (
+    28700  # leaves headroom under the 28800s (8h) hook timeout in plugin.json
+)
 
 mcp = FastMCP("telegram-buddy")
 

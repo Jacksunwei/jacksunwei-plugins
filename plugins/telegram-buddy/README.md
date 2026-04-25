@@ -96,7 +96,8 @@ call is blocked).
 
 ## Edge cases
 
-- **Telegram timeout** (no tap within 5 minutes) → hook returns no decision, Claude falls back to the local prompt.
+- **Telegram timeout** (no tap within 8 hours) → hook returns no decision, Claude falls back to the local prompt. Note:
+  the originating Claude Code session is blocked the whole time.
 - **Phone offline / Telegram unreachable** → same as timeout.
 - **Two sessions try to enable** → the second one errors cleanly: `Could not bind port 8787...`. Disable in the other
   session first.
@@ -131,7 +132,7 @@ For **standalone testing** outside Claude Code, the server also honors these env
 - Only one Claude Code session can hold the listener at a time. A second session calling `enable_telegram` errors out
   cleanly — disable in the other first.
 - Inline-keyboard buttons in DMs only. Don't add the bot to groups.
-- If Telegram times out (no tap within 5 minutes), the hook returns no decision and Claude Code falls back to its local
+- If Telegram times out (no tap within 8 hours), the hook returns no decision and Claude Code falls back to its local
   prompt.
 
 ## License
