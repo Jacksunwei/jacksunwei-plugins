@@ -1,55 +1,63 @@
 # telegram-buddy
 
-Approve Claude Code permission prompts from Telegram, so a long-running session can keep moving while you're away from
-the terminal.
+**Step away from the terminal. Tap Approve on your phone. Claude keeps going.**
 
-## How to use it
+A Claude Code plugin that diverts permission prompts to a Telegram chat. When Claude hits a `git push`, an unfamiliar
+`rm`, or any other prompt-worthy call, your phone buzzes — one tap and the run resumes from wherever you are. Calls
+already in your `permissions.allow` keep running silently; only the things that would actually stall Claude reach your
+phone.
 
-Once installed, the daily loop is two commands.
+![Telegram prompt with Approve/Deny buttons](./docs/prompt.png)
 
-When you're about to step away from the terminal:
+## When you'd want this
 
-```
-/telegram-buddy:on
-```
-
-(or just say to Claude: *"Enable Telegram approvals."*)
-
-Now any tool call that *would have prompted you* in the terminal gets sent to your Telegram chat instead — tap
-**Approve** or **Deny** on your phone, and Claude continues. Calls already covered by your `permissions.allow` rules
-keep running silently; your phone only buzzes for things Claude would have actually asked you about.
-
-When you're back:
-
-```
-/telegram-buddy:off
-```
-
-(or *"Disable Telegram approvals."*)
-
-Future prompts go back to the terminal. That's the whole loop. Check current state with `/telegram-buddy:status`.
-
-### Typical user scenarios
-
-**1. Step away mid-task.** The dishwasher's beeping, the kid needs pickup, the coffee run can't wait — and Claude is
+**Step away mid-task.** The dishwasher's beeping, the kid needs pickup, the coffee run can't wait — and Claude is
 halfway through a long refactor. Flip on Telegram approvals, walk out the door. When Claude hits the next `git push` or
 `rm`, your phone buzzes; tap **Approve** from the sidewalk and the run keeps moving instead of stalling on an empty
 terminal until you're back.
 
-**2. Read without breaking flow.** Claude is mid-stream printing a wall of analysis you actually want to absorb. The
-moment it hits a permission prompt, the terminal yanks your focus into a modal and your reading flow shatters. With
-Telegram on, the prompt diverts to your phone — thumb-tap **Approve**, eyes never leave the scrollback.
+**Read without breaking flow.** Claude is mid-stream printing a wall of analysis you actually want to absorb. The moment
+it hits a permission prompt, the terminal yanks your focus into a modal and your reading flow shatters. With Telegram
+on, the prompt diverts to your phone — thumb-tap **Approve**, eyes never leave the scrollback.
 
-## Why this exists
+## The daily loop
 
-The official `telegram` plugin's `claude/channel/permission` capability (and Claude Code's `auto` mode) require the
-direct Anthropic API — on Vertex AI / Bedrock / Foundry / 3rd-party models, Claude Code drops them silently.
-telegram-buddy uses a `PermissionRequest` HTTP hook instead: works on any backend, fires only when Claude Code would
-have prompted you, so allowlisted calls stay silent.
+Two commands. That's the whole UX.
 
-It also fits a different session shape. The official plugin extends the whole session to Telegram — input, output, and
-approvals all reachable from the phone in parallel with the terminal. telegram-buddy mirrors only the permission modal,
-so your scrollback and editor stay the sole I/O surface.
+```
+/telegram-buddy:on    # before you step away
+/telegram-buddy:off   # when you're back
+```
+
+Plain language works too: *"Enable Telegram approvals"* / *"Disable Telegram approvals"*. Check current state with
+`/telegram-buddy:status`.
+
+## What it looks like
+
+The three states a permission request goes through on Telegram:
+
+**1. Prompt arrives.** Inline-keyboard buttons attached to the request:
+
+![Telegram prompt with Approve/Deny buttons](./docs/prompt.png)
+
+**2. You tap Approve.** Buttons disappear, the bubble shows ✅ Approved (or ❌ Denied), and Claude continues:
+
+![Telegram message after tapping Approve](./docs/approved.png)
+
+**3. You answered locally instead.** The local terminal prompt fires in parallel; if you answer there first, Claude runs
+the tool and the Telegram bubble auto-clears to 🤝 Resolved without Telegram so you know the message is stale:
+
+![Telegram message after the local prompt was answered](./docs/resolved-locally.png)
+
+## Why this and not the official `telegram` plugin
+
+**Works on any backend.** The official plugin's `claude/channel/permission` capability (and Claude Code's `auto` mode)
+require the direct Anthropic API — on Vertex AI / Bedrock / Foundry / 3rd-party models, Claude Code drops them silently.
+telegram-buddy uses a `PermissionRequest` HTTP hook instead, so it works regardless of which backend you've configured.
+
+**Different session shape.** The official plugin extends the whole session to Telegram — input, output, and approvals
+all reachable from the phone in parallel with the terminal. telegram-buddy mirrors only the permission modal; your
+scrollback and editor stay the sole I/O surface, and your phone stays quiet except when Claude actually needs you.
 
 ## Setup
 
@@ -73,7 +81,7 @@ Claude Code prompts for two values during install:
 - **Telegram Chat ID** — your numeric Telegram user ID. Get it by messaging [@userinfobot](https://t.me/userinfobot) —
   copy the `Id` value it returns.
 
-To re-enter or change either later: `/plugin list` → telegram-buddy → Configure options.
+Reconfigure later: `/plugin list` → telegram-buddy → Configure options.
 
 > Heads-up: Claude Code v2.1.84 has a known bug where the install prompts can be skipped. If you don't see them, use the
 > `Configure options` flow above to set the values.
@@ -84,70 +92,52 @@ DM your bot once (any message) — Telegram requires you to initiate before a bo
 
 ## Tool reference
 
-The plugin exposes three MCP tools. Each has a slash command wrapper for quick use; you can also call the tool by its
-full name or just ask Claude in plain language.
+| Slash command            | MCP tool           | What it does                                                                                                |
+| ------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `/telegram-buddy:on`     | `enable_telegram`  | Bind `127.0.0.1:8787`, start the Telegram poller. Sends to the chat ID from your install/Configure options. |
+| `/telegram-buddy:off`    | `disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                       |
+| `/telegram-buddy:status` | `status`           | Show enabled/polling state, current owner of the bridge, pending and decided counters.                      |
 
-| Slash command            | MCP tool           | Direct MCP name                                               | What it does                                                                                                |
-| ------------------------ | ------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `/telegram-buddy:on`     | `enable_telegram`  | `mcp__plugin_telegram-buddy_telegram-buddy__enable_telegram`  | Bind `127.0.0.1:8787`, start the Telegram poller. Sends to the chat ID from your install/Configure options. |
-| `/telegram-buddy:off`    | `disable_telegram` | `mcp__plugin_telegram-buddy_telegram-buddy__disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                       |
-| `/telegram-buddy:status` | `status`           | `mcp__plugin_telegram-buddy_telegram-buddy__status`           | Show enabled/disabled, chat ID, port, pending count, decided count.                                         |
+Tip: add the three MCP names (`mcp__plugin_telegram-buddy_telegram-buddy__*`) to `permissions.allow` in
+`~/.claude/settings.json` so the slash commands don't themselves trigger a prompt.
 
-Tip: add the three MCP names to `permissions.allow` in `~/.claude/settings.json` so the slash commands run silently
-instead of prompting you to approve each invocation.
+## How it works
 
-## What the Telegram message looks like
-
-```
-🔧 Bash [a1b2c3]
-git push origin main
-cwd: /Users/you/your-repo
-[✅ Approve]  [❌ Deny]
-```
-
-Tap a button. The bubble updates to show ✅ Approved or ❌ Denied, the keyboard disappears, and Claude proceeds (or the
-call is blocked).
-
-## Edge cases
-
-- **Telegram timeout** (no tap within 8 hours) → hook returns no decision, Claude falls back to the local prompt. Note:
-  the originating Claude Code session is blocked the whole time.
-- **Phone offline / Telegram unreachable** → same as timeout.
-- **Two sessions try to enable** → the second one errors cleanly: `Could not bind port 8787...`. Disable in the other
-  session first.
-- **Forgot to disable before closing the session** → the MCP server is killed when Claude Code exits, which frees the
-  port automatically.
+1. **Permission-only hook.** A `PermissionRequest` HTTP hook (declared in `plugin.json`) fires *only* when Claude Code
+   is about to prompt you — calls covered by `permissions.allow` are auto-approved upstream and never reach the bridge.
+1. **On-demand listener.** The MCP server only binds port 8787 when you call `enable_telegram`. Disabled = port unbound
+   = hook gets connection-refused = silent local-prompt fallback.
+1. **Telegram round-trip.** While enabled, the server forwards each prompt as an inline-keyboard message to your chat;
+   the button callback resolves the pending request and the hook returns the decision to Claude Code.
+1. **Multi-session safe.** Hooks fire from every Claude Code session on the machine, but the bridge filters by
+   `session_id` — only the session that called `/telegram-buddy:on` (the *owner*) gets routed to Telegram. Other
+   sessions silently fall back to local prompts. Calling `/telegram-buddy:on` from a second session triggers an
+   automatic handover via the bridge's `/release` endpoint.
 
 ## Configuration
 
-The bot token and chat ID are set via the plugin's install prompts (see Setup). To reconfigure later: `/plugin list` →
-telegram-buddy → Configure options.
+Bot token and chat ID are set via the install prompts (above). Reconfigure later: `/plugin list` → telegram-buddy →
+Configure options.
 
-For **standalone testing** outside Claude Code, the server also honors these env vars as fallbacks:
+For standalone testing outside Claude Code, the server honors these env vars as fallbacks:
 
 | Variable                 | Notes                                                       |
 | ------------------------ | ----------------------------------------------------------- |
 | `TELEGRAM_BOT_TOKEN`     | Bot token.                                                  |
 | `TELEGRAM_BUDDY_CHAT_ID` | Chat ID for `enable_telegram` to send approval messages to. |
 
-## How it works
+## Edge cases & limitations
 
-1. **Permission-only hook**: the plugin declares a `PermissionRequest` HTTP hook (in `plugin.json`) that fires *only*
-   when Claude Code is about to prompt you — calls already covered by your `permissions.allow` rules are auto-approved
-   upstream and never reach the hook.
-1. **On-demand bridge**: the MCP server only binds port 8787 when you call `enable_telegram`. When disabled, the port is
-   unbound, the hook gets connection-refused, and Claude Code falls back to its normal local prompt.
-1. **Telegram round-trip**: while enabled, the server forwards each prompt as an inline-keyboard message to your chat;
-   the button callback resolves the pending request and the hook returns `decision: {behavior: "allow" | "deny"}` to
-   Claude Code.
-
-## Limitations
-
-- Only one Claude Code session can hold the listener at a time. A second session calling `enable_telegram` errors out
-  cleanly — disable in the other first.
-- Inline-keyboard buttons in DMs only. Don't add the bot to groups.
-- If Telegram times out (no tap within 8 hours), the hook returns no decision and Claude Code falls back to its local
-  prompt.
+- **Approval timeout** (no tap within 8h) → hook returns no decision, Claude falls back to the local prompt. The
+  originating session is blocked the whole time.
+- **Take-over transition.** When another session calls `/telegram-buddy:on` while you hold the bridge, ownership
+  transfers cleanly via `/release`. Polling can sit in `starting` for up to ~30s afterward while the previous owner's
+  long-poll drains — `status()` shows the live state. Sends work during this window; tap callbacks queue at Telegram
+  until polling becomes `active`.
+- **Forgot to disable before closing Claude Code.** The MCP server is killed on exit, the port frees automatically, but
+  any in-flight Telegram messages with active buttons become dead-ends until something else (a new owner, a future tap)
+  forces them to expire.
+- **Inline-keyboard buttons in DMs only** — don't add the bot to groups.
 
 ## License
 
