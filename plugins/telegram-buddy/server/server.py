@@ -46,6 +46,7 @@ via explicit ${user_config.KEY} substitution in the manifest's mcpServers.env.
 """
 
 import asyncio
+import html
 import os
 import secrets
 
@@ -58,6 +59,9 @@ PORT = 8787
 HOOK_TIMEOUT_S = (
     28700  # leaves headroom under the 28800s (8h) hook timeout in plugin.json
 )
+# Cap each interpolated field. Long attacker payloads otherwise push the
+# Approve/Deny buttons off-screen on mobile.
+MAX_FIELD_LEN = 1024
 
 mcp = FastMCP("telegram-buddy")
 
@@ -66,13 +70,27 @@ state: dict = {
     "chat_id": None,
     "http_runner": None,
     "tg_app": None,
-    "pending": {},  # request_id -> {"future": Future[str], "text": markdown source}
+    "pending": {},  # request_id -> {"future": Future[str], "text": HTML source}
     "decided": 0,
 }
 
 
 def _load_token() -> str | None:
   return os.environ.get("TELEGRAM_BOT_TOKEN") or None
+
+
+def _esc(value, max_len: int = MAX_FIELD_LEN) -> str:
+  """HTML-escape a value, truncating to bound message length.
+
+  Critical: every interpolated field MUST go through this. Telegram parses
+  the message body as HTML, and an unescaped attacker-controlled field
+  (tool_name, command, file_path, cwd, etc.) could otherwise close a tag,
+  inject formatting, and spoof a different request to the operator.
+  """
+  s = str(value)
+  if len(s) > max_len:
+    s = s[:max_len] + "…[truncated]"
+  return html.escape(s)
 
 
 def _format_request(payload: dict, request_id: str) -> str:
@@ -82,12 +100,17 @@ def _format_request(payload: dict, request_id: str) -> str:
   preview = ""
   if isinstance(inp, dict):
     if "command" in inp:
-      preview = f"\n```\n{inp['command']}\n```"
+      preview = f"\n<pre>{_esc(inp['command'])}</pre>"
     elif "file_path" in inp:
-      preview = f"\n`{inp['file_path']}`"
+      preview = f"\n<code>{_esc(inp['file_path'])}</code>"
     elif "url" in inp:
-      preview = f"\n{inp['url']}"
-  return f"🔧 *{tool}* `[{request_id}]`{preview}\n_cwd_: `{cwd}`"
+      preview = f"\n{_esc(inp['url'])}"
+  # request_id is hex from secrets.token_hex — no escape needed.
+  return (
+      f"🔧 <b>{_esc(tool)}</b> <code>[{request_id}]</code>"
+      f"{preview}\n"
+      f"<i>cwd</i>: <code>{_esc(cwd)}</code>"
+  )
 
 
 async def _on_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -110,12 +133,14 @@ async def _on_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
     suffix = "✅ Approved" if decision == "allow" else "❌ Denied"
   else:
     suffix = "⏰ Expired"
-  # Re-send the original markdown source so the codeblock keeps rendering on
-  # edit. q.message.text is plain text and would lose the formatting.
+  # Re-send the original HTML source so the formatting persists on edit.
+  # q.message.text is plain text and would lose it. The suffix is a literal
+  # safe string (✅/❌/⏰) so no escaping needed; if you ever interpolate
+  # user content into it, run it through _esc().
   prior = entry["text"] if entry else None
   if prior is not None:
     try:
-      await q.edit_message_text(text=f"{prior}\n\n{suffix}", parse_mode="Markdown")
+      await q.edit_message_text(text=f"{prior}\n\n{suffix}", parse_mode="HTML")
     except Exception:
       pass
 
@@ -140,7 +165,7 @@ async def _handle_approve(request: web.Request) -> web.Response:
         chat_id=state["chat_id"],
         text=text,
         reply_markup=keyboard,
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
   except Exception:
     state["pending"].pop(rid, None)
