@@ -1,0 +1,18 @@
+# IDE / code-tracing only — NOT used at runtime.
+#
+# Plugins ship their deps in PEP 723 inline metadata inside each
+# plugins/<name>/server/server.py; uv installs them on first launch.
+# This file aggregates those deps so a single venv at ./.venv can resolve
+# imports for jump-to-definition, autocomplete, and debugging in the IDE.
+#
+# Sync manually when a plugin adds or bumps a dep.
+#
+# Setup:
+#   uv venv
+#   uv pip install -r requirements-dev.txt
+#   # then point your IDE at .venv/bin/python
+
+google-genai>=1.73.0          # gemini-web
+mcp[cli]>=1.27.0              # gemini-web, claude-approve
+aiohttp>=3.9                  # claude-approve
+python-telegram-bot>=21.0     # claude-approve
