@@ -2,7 +2,7 @@
 
 Approve Claude Code permission prompts from Telegram, so a long-running session can keep moving while you're away from the terminal.
 
-When **enabled**, every `Bash` / `Edit` / `Write` / `WebFetch` call sends an inline-keyboard message to your Telegram chat; tap **Approve** or **Deny** to decide. Claude Code's local prompt is replaced by your tap.
+When **enabled**, any tool call that *would have prompted you* — i.e., not already auto-approved by your `permissions.allow` rules — is relayed to your Telegram chat as an inline-keyboard message; tap **Approve** or **Deny**. Allowlisted calls run silently as usual.
 
 When **disabled** (the default), nothing happens — the hook gets connection-refused and Claude Code falls back to its normal local prompt. That's the "back at desk" mode.
 
@@ -65,15 +65,15 @@ For **standalone testing** outside Claude Code, the server also honors these env
 
 ## How it works
 
-1. **Always-on hook**: the plugin declares a `PreToolUse` HTTP hook (in `plugin.json`) that POSTs every matched tool call to `http://localhost:8787/approve`.
-2. **On-demand bridge**: the MCP server only binds port 8787 when you call `enable_telegram`. When disabled, the port is unbound, the hook gets connection-refused, and Claude Code falls back to its normal prompt.
-3. **Telegram round-trip**: while enabled, the server forwards each request as an inline-keyboard message to your chat; the button callback resolves the pending request and the hook returns the decision JSON to Claude Code.
+1. **Permission-only hook**: the plugin declares a `PermissionRequest` HTTP hook (in `plugin.json`) that fires *only* when Claude Code is about to prompt you — calls already covered by your `permissions.allow` rules are auto-approved upstream and never reach the hook.
+2. **On-demand bridge**: the MCP server only binds port 8787 when you call `enable_telegram`. When disabled, the port is unbound, the hook gets connection-refused, and Claude Code falls back to its normal local prompt.
+3. **Telegram round-trip**: while enabled, the server forwards each prompt as an inline-keyboard message to your chat; the button callback resolves the pending request and the hook returns `decision: {behavior: "allow" | "deny"}` to Claude Code.
 
 ## Limitations
 
 - Only one Claude Code session can hold the listener at a time. A second session calling `enable_telegram` errors out cleanly — disable in the other first.
 - Inline-keyboard buttons in DMs only. Don't add the bot to groups.
-- Reads (`Read`, `Grep`, `Glob`) are intentionally not intercepted, so your phone doesn't buzz on every file open.
+- If Telegram times out (no tap within 5 minutes), the hook returns no decision and Claude Code falls back to its local prompt.
 
 ## License
 

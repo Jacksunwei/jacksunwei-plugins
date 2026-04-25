@@ -27,11 +27,13 @@ Tools:
   - disable_telegram(): stop both
   - status(): report current state
 
-The plugin also declares a PreToolUse HTTP hook (in plugin.json) that POSTs
-every matched tool call to http://localhost:8787/approve. While "enabled",
-this server relays each request to Telegram as an inline-keyboard message
-and resolves the response with the user's tap. While "disabled", the port is
-unbound and Claude Code falls back to its local prompt.
+The plugin declares a PermissionRequest HTTP hook (in plugin.json) that POSTs
+to http://localhost:8787/approve only when Claude Code is about to prompt the
+user — i.e., calls already auto-approved by the allowlist run silently and
+never reach this server. While "enabled", the server relays each prompt to
+Telegram as an inline-keyboard message and resolves with the user's tap.
+While "disabled", the port is unbound and Claude Code falls back to its
+local prompt.
 
 Bot token discovery: TELEGRAM_BOT_TOKEN env var. Inside Claude Code, this is
 populated by plugin.json's mcpServers.env from the userConfig prompt at
@@ -133,15 +135,10 @@ async def _handle_approve(request: web.Request) -> web.Response:
       reply_markup=keyboard,
       parse_mode="Markdown",
     )
-  except Exception as e:
+  except Exception:
     state["pending"].pop(rid, None)
-    return web.json_response({
-      "hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "ask",
-        "permissionDecisionReason": f"claude-approve: telegram send failed: {e}",
-      }
-    })
+    # Empty body → no hook decision → Claude Code falls back to its local prompt.
+    return web.json_response({})
 
   try:
     decision = await asyncio.wait_for(fut, timeout=HOOK_TIMEOUT_S)
@@ -151,22 +148,42 @@ async def _handle_approve(request: web.Request) -> web.Response:
     state["pending"].pop(rid, None)
 
   state["decided"] += 1
-  return web.json_response({
-    "hookSpecificOutput": {
-      "hookEventName": "PreToolUse",
-      "permissionDecision": decision,
-      "permissionDecisionReason": f"claude-approve via Telegram → {decision}",
+  return web.json_response(_hook_response(decision))
+
+
+def _hook_response(decision: str) -> dict:
+  """Shape a PermissionRequest hook response.
+
+  - 'allow' / 'deny' → structured decision that Claude Code applies directly.
+  - anything else (e.g. 'ask' from a timeout) → empty object, so Claude Code
+    falls back to its local prompt. PermissionRequest's decision field only
+    accepts allow/deny; there is no 'ask' or 'defer' to send back.
+  """
+  if decision == "allow":
+    return {
+      "hookSpecificOutput": {
+        "hookEventName": "PermissionRequest",
+        "decision": {"behavior": "allow"},
+      }
     }
-  })
+  if decision == "deny":
+    return {
+      "hookSpecificOutput": {
+        "hookEventName": "PermissionRequest",
+        "decision": {"behavior": "deny", "message": "Denied via Telegram"},
+      }
+    }
+  return {}
 
 
 @mcp.tool()
 async def enable_telegram(chat_id: str | None = None) -> str:
   """Start routing Claude Code permission prompts to Telegram.
 
-  Binds 127.0.0.1:8787 and starts a Telegram long-poll. While enabled, every
-  PreToolUse hook for Bash/Edit/Write/WebFetch is relayed to your phone as
-  an inline-keyboard message; tap Approve or Deny to decide.
+  Binds 127.0.0.1:8787 and starts a Telegram long-poll. While enabled, any
+  tool call that *would have prompted you* (i.e., not auto-allowed by your
+  permissions allowlist) is relayed to your phone as an inline-keyboard
+  message; tap Approve or Deny to decide. Allowlisted calls run silently.
 
   Args:
     chat_id: Telegram chat ID for approval messages. For DMs, this is your
