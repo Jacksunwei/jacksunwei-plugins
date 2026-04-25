@@ -1,6 +1,6 @@
 {
   "name": "claude-approve",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Approve Claude Code permission prompts from Telegram while away from the terminal",
   "author": {
     "name": "Wei (Jack) Sun"
