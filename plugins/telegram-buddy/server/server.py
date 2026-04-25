@@ -62,6 +62,19 @@ PORT = 8787
 HOOK_TIMEOUT_S = (
     28700  # leaves headroom under the 28800s (8h) hook timeout in plugin.json
 )
+# Crude file logging for diagnosing hook deliveries when MCP server stderr
+# is not easily reachable. Append-only; harmless if the file grows.
+LOG_PATH = "/tmp/telegram-buddy.log"
+
+
+def _log(msg: str) -> None:
+  try:
+    with open(LOG_PATH, "a") as f:
+      f.write(msg.rstrip() + "\n")
+  except Exception:
+    pass
+
+
 # Cap each interpolated field. Long attacker payloads otherwise push the
 # Approve/Deny buttons off-screen on mobile.
 MAX_FIELD_LEN = 1024
@@ -181,13 +194,20 @@ async def _handle_posttooluse(request: web.Request) -> web.Response:
   """
   try:
     payload = await request.json()
-  except Exception:
+  except Exception as e:
+    _log(f"posttooluse: failed to parse json: {e}")
     return web.json_response({})
   tool_name = payload.get("tool_name", "?")
   key = _input_key(tool_name, payload.get("tool_input") or {})
+  pending_keys = [e.get("input_key") for e in state["pending"].values()]
+  _log(
+      f"posttooluse: tool={tool_name} key={key!r} "
+      f"pending={len(state['pending'])} pending_keys={pending_keys}"
+  )
   for rid, entry in list(state["pending"].items()):
     if entry.get("input_key") != key:
       continue
+    _log(f"posttooluse: matched rid={rid}")
     await _edit_telegram(rid, "🤝 Resolved without Telegram")
     fut = entry.get("future")
     if fut and not fut.done():
