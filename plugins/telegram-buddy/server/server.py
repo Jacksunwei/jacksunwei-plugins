@@ -180,7 +180,7 @@ async def _handle_posttooluse(request: web.Request) -> web.Response:
   for rid, entry in list(state["pending"].items()):
     if entry.get("tool_name") != tool_name or entry.get("input_key") != key:
       continue
-    await _edit_telegram(rid, "🤝 Handled in terminal")
+    await _edit_telegram(rid, "🤝 Resolved without Telegram")
     fut = entry.get("future")
     if fut and not fut.done():
       # 'ask' → empty hook response → Claude Code uses whatever decision the

@@ -1,6 +1,6 @@
 {
   "name": "telegram-buddy",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Approve Claude Code permission prompts from Telegram while away from the terminal",
   "author": {
     "name": "Wei (Jack) Sun"
