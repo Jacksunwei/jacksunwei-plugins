@@ -218,6 +218,13 @@ class TelegramBridge:
     self.tg_app: Application | None = None
     self.pending: dict[str, PendingApproval] = {}
     self.decided: int = 0
+    # Telegram polling lifecycle. Distinct from `enabled` (which only tracks
+    # the HTTP listener) because the Telegram bot can take seconds to start
+    # polling — Telegram allows one getUpdates consumer per token, and after
+    # a take-over the previous owner's long-poll can hold the slot for ~30s.
+    # Values: "idle" | "starting" | "active" | "failed".
+    self.polling_state: str = "idle"
+    self.polling_error: str | None = None
 
   # ---- Telegram callback ----
 
@@ -423,28 +430,79 @@ class TelegramBridge:
       await runner.cleanup()
       return f"Could not bind port {PORT}: {e}."
 
-    tg_app = Application.builder().token(token).build()
-    tg_app.add_handler(CallbackQueryHandler(self.on_callback))
-    await tg_app.initialize()
-    await tg_app.start()
-    updater = tg_app.updater
-    if updater is None:
-      await tg_app.shutdown()
-      await runner.cleanup()
-      return "Telegram Application has no updater (unexpected)."
-    await updater.start_polling(
-        drop_pending_updates=True,
-        allowed_updates=["callback_query"],
-    )
-
+    # Mark enabled and store HTTP listener immediately so the new owner is
+    # visible via /who right away. Telegram polling starts in a background
+    # task — Telegram allows one getUpdates consumer per token, so after a
+    # take-over we may hit 409 Conflict for up to ~30s while the previous
+    # owner's long-poll drains. The retry loop handles that.
     self.enabled = True
     self.chat_id = str(chat_id)
     self.owner_session_id = session_id
     self.http_runner = runner
-    self.tg_app = tg_app
+    self.polling_state = "starting"
+    self.polling_error = None
+    asyncio.create_task(self._start_polling_with_retry(token))
+
     return (
-        f"Enabled. Approvals route to chat {chat_id}. " f"Listener on 127.0.0.1:{PORT}."
+        f"Enabled. Approvals route to chat {chat_id}. "
+        f"Listener on 127.0.0.1:{PORT}. Telegram polling starting in "
+        f"background — check status."
     )
+
+  async def _start_polling_with_retry(self, token: str, max_attempts: int = 12) -> None:
+    """Start the Telegram bot, retrying on 409 Conflict.
+
+    Telegram permits exactly one getUpdates consumer per token. After a
+    take-over the previous owner's long-poll can hold the slot for up to
+    ~30s before its task notices the stop signal. We retry start_polling
+    with backoff, capped, until either we succeed or give up.
+    """
+    tg_app = Application.builder().token(token).build()
+    tg_app.add_handler(CallbackQueryHandler(self.on_callback))
+    try:
+      await tg_app.initialize()
+      await tg_app.start()
+    except Exception as e:
+      _log(f"polling: bot bootstrap failed: {e}")
+      self.polling_state = "failed"
+      self.polling_error = str(e)
+      return
+    self.tg_app = tg_app
+
+    updater = tg_app.updater
+    if updater is None:
+      self.polling_state = "failed"
+      self.polling_error = "Telegram Application has no updater"
+      return
+
+    for attempt in range(1, max_attempts + 1):
+      try:
+        await updater.start_polling(
+            drop_pending_updates=True,
+            allowed_updates=["callback_query"],
+        )
+        self.polling_state = "active"
+        self.polling_error = None
+        _log(f"polling: started on attempt {attempt}")
+        return
+      except Exception as e:
+        msg = str(e)
+        is_conflict = "409" in msg or "Conflict" in msg
+        if not is_conflict:
+          _log(f"polling: non-409 failure on attempt {attempt}: {e}")
+          self.polling_state = "failed"
+          self.polling_error = msg
+          return
+        delay = min(0.5 + 0.5 * attempt, 5.0)
+        _log(f"polling: 409 on attempt {attempt}, retrying in {delay:.1f}s")
+        await asyncio.sleep(delay)
+
+    self.polling_state = "failed"
+    self.polling_error = (
+        f"409 Conflict persisted after {max_attempts} attempts — another "
+        "instance is still polling on this token."
+    )
+    _log(self.polling_error)
 
   async def disable(self, session_id: str) -> str:
     # Case (a): we are the listener owner. Normal shutdown.
@@ -481,13 +539,45 @@ class TelegramBridge:
       return "Not enabled. Nothing to do."
 
   def status_string(self) -> str:
-    return (
-        f"enabled={self.enabled} "
-        f"chat_id={self.chat_id} "
-        f"port={PORT} "
-        f"pending={len(self.pending)} "
-        f"decided={self.decided}"
-    )
+    """Local-only status — what THIS MCP server's bridge instance knows."""
+    parts = [
+        f"enabled={self.enabled}",
+        f"polling={self.polling_state}",
+        f"chat_id={self.chat_id}",
+        f"port={PORT}",
+        f"pending={len(self.pending)}",
+        f"decided={self.decided}",
+    ]
+    if self.polling_error:
+      parts.append(f"polling_error={self.polling_error!r}")
+    return " ".join(parts)
+
+  async def status_with_listener(self, current_session_id: str | None) -> str:
+    """Local status + a probe of /who to report the actual listener owner.
+
+    Useful when the caller's session may not be the owner — the local fields
+    reflect THIS MCP server, but the listener might be held by a different
+    session that took over via S5.
+    """
+    base = self.status_string()
+    listener: str
+    try:
+      async with ClientSession() as client:
+        async with client.get(f"http://127.0.0.1:{PORT}/who", timeout=2) as resp:
+          info = await resp.json()
+      owner = info.get("owner_session_id")
+      pid = info.get("pid")
+      if not owner:
+        mine = "no-owner"
+      elif current_session_id and owner == current_session_id:
+        mine = "yes"
+      else:
+        mine = "no"
+      preview = (owner[:8] + "…") if owner else "?"
+      listener = f"listener=up listener_pid={pid} listener_owner={preview} mine={mine}"
+    except Exception:
+      listener = "listener=down"
+    return f"{base} | {listener}"
 
   # ---- Internal helpers ----
 
@@ -511,8 +601,13 @@ class TelegramBridge:
       pass
 
   async def _shutdown(self) -> None:
-    """Stops Telegram poller, closes HTTP listener, resolves pending Futures
-    with 'ask', clears state. Used by both disable and the /release handover.
+    """Free the port first, then tear down Telegram in the background.
+
+    The Telegram updater's long-poll can hold the connection for ~30s
+    waiting for getUpdates to return, which previously blocked the HTTP
+    runner cleanup and made take-over (S5) flaky. Closing the listener
+    first lets the new owner bind immediately; the bot teardown trails
+    asynchronously.
     """
     if not self.enabled:
       return
@@ -521,20 +616,31 @@ class TelegramBridge:
         entry.future.set_result("ask")
     self.pending.clear()
 
+    runner = self.http_runner
     tg = self.tg_app
-    try:
-      if tg is not None and tg.updater is not None:
-        await tg.updater.stop()
-      if tg is not None:
-        await tg.stop()
-        await tg.shutdown()
-    except Exception:
-      pass
+    self._clear()  # mark disabled before any awaits
 
-    if self.http_runner is not None:
-      await self.http_runner.cleanup()
+    # Free the port FIRST so the take-over requester can bind right away.
+    if runner is not None:
+      try:
+        await runner.cleanup()
+      except Exception:
+        pass
 
-    self._clear()
+    # Bot teardown can be slow (long-poll). Background it so /release returns
+    # quickly and we don't block the take-over.
+    if tg is not None:
+
+      async def _tg_shutdown():
+        try:
+          if tg.updater is not None:
+            await tg.updater.stop()
+          await tg.stop()
+          await tg.shutdown()
+        except Exception:
+          pass
+
+      asyncio.create_task(_tg_shutdown())
 
   def _clear(self) -> None:
     self.enabled = False
@@ -542,6 +648,8 @@ class TelegramBridge:
     self.owner_session_id = None
     self.http_runner = None
     self.tg_app = None
+    self.polling_state = "idle"
+    self.polling_error = None
 
   async def _ensure_port_free(self) -> str | None:
     """If port PORT is bound by another listener, ask it to release (S5).
@@ -638,9 +746,18 @@ async def disable_telegram(session_id: str) -> str:
 
 
 @mcp.tool()
-async def status() -> str:
-  """Report whether Telegram routing is enabled and basic counters."""
-  return _bridge.status_string()
+async def status(session_id: str | None = None) -> str:
+  """Report local bridge state plus a probe of who actually owns the listener.
+
+  The local fields (enabled / polling / chat_id / pending / decided) reflect
+  THIS MCP server's state. The trailing `listener=...` segment is the result
+  of a live GET /who against 127.0.0.1:8787, so it shows the actual current
+  owner even if our local state is stale (e.g. we were taken over by another
+  session). If `session_id` is supplied (the /telegram-buddy:status slash
+  command passes it via ${CLAUDE_SESSION_ID}), `mine=yes/no` tells you at a
+  glance whether the bridge belongs to your session.
+  """
+  return await _bridge.status_with_listener(session_id)
 
 
 if __name__ == "__main__":
