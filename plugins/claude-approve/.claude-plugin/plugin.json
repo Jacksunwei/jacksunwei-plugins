@@ -1,0 +1,58 @@
+{
+  "name": "claude-approve",
+  "version": "0.1.0",
+  "description": "Approve Claude Code permission prompts from Telegram while away from the terminal",
+  "author": {
+    "name": "Wei (Jack) Sun"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/jacksunwei/jacksunwei-plugins/tree/main/plugins/claude-approve",
+  "repository": "https://github.com/jacksunwei/jacksunwei-plugins",
+  "keywords": [
+    "mcp",
+    "claude-code",
+    "permissions",
+    "telegram",
+    "hooks",
+    "remote-approval"
+  ],
+  "userConfig": {
+    "telegram_bot_token": {
+      "type": "string",
+      "title": "Telegram Bot Token",
+      "description": "From BotFather: open Telegram, message @BotFather, run /newbot, follow the prompts, copy the HTTP API token.",
+      "sensitive": true,
+      "required": true
+    },
+    "chat_id": {
+      "type": "string",
+      "title": "Telegram Chat ID",
+      "description": "Numeric chat ID for approval messages. To get yours: message @userinfobot on Telegram, copy the 'Id' value. After install, DM your bot once so Telegram allows it to message you back.",
+      "required": true
+    }
+  },
+  "mcpServers": {
+    "claude-approve": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--script",
+        "${CLAUDE_PLUGIN_ROOT}/server/server.py"
+      ]
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|WebFetch",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:8787/approve",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

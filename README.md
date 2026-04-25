@@ -4,9 +4,10 @@ Claude Code plugin marketplace curated by Wei (Jack) Sun.
 
 ## Plugins
 
-| Plugin                               | Description                                                                                                      |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| [`gemini-web`](./plugins/gemini-web) | Gemini-powered web tools: `web_search` (via `google_search` grounding) and `summarize_pages` (via `url_context`) |
+| Plugin                                       | Description                                                                                                      |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [`gemini-web`](./plugins/gemini-web)         | Gemini-powered web tools: `web_search` (via `google_search` grounding) and `summarize_pages` (via `url_context`) |
+| [`claude-approve`](./plugins/claude-approve) | Approve Claude Code permission prompts from Telegram while away from the terminal                                |
 
 See each plugin's README for auth, configuration, and usage details.
 
