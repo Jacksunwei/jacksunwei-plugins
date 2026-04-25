@@ -25,7 +25,8 @@ Then install individual plugins:
 
 ## Prerequisites
 
-**`uv`** on `PATH` — [install](https://docs.astral.sh/uv/getting-started/installation/). Plugins in this marketplace run their MCP servers with `uv run --script`, which auto-installs Python deps from PEP 723 inline metadata on first run.
+**`uv`** on `PATH` — [install](https://docs.astral.sh/uv/getting-started/installation/). Plugins in this marketplace run
+their MCP servers with `uv run --script`, which auto-installs Python deps from PEP 723 inline metadata on first run.
 
 Plugin-specific prerequisites (auth, env vars, API access) are documented in each plugin's README.
 

@@ -116,9 +116,7 @@ async def summarize_pages(urls: list[str], focus: str | None = None) -> str:
   url_lines = "\n".join(f"- {u}" for u in urls)
   focus_clause = f" Focus on: {focus}." if focus else ""
   page_word = "page" if len(urls) == 1 else "pages"
-  prompt = (
-      f"Summarize the following {page_word}.{focus_clause}\n{url_lines}"
-  )
+  prompt = f"Summarize the following {page_word}.{focus_clause}\n{url_lines}"
 
   response = await client.aio.models.generate_content(
       model=MODEL,

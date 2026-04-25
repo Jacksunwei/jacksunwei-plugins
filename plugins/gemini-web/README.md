@@ -3,9 +3,11 @@
 Gemini-powered web tools for Claude Code, exposed via MCP.
 
 - **`web_search`** — answers a question using Gemini's `google_search` grounding, with source URLs.
-- **`summarize_pages`** — fetches one or more URLs via Gemini's `url_context` tool and returns a synthesized summary, optionally focused on an aspect you specify.
+- **`summarize_pages`** — fetches one or more URLs via Gemini's `url_context` tool and returns a synthesized summary,
+  optionally focused on an aspect you specify.
 
-Both tools are thin wrappers over Gemini's built-in grounding tools — fast, broad coverage, real source URLs come back in the response.
+Both tools are thin wrappers over Gemini's built-in grounding tools — fast, broad coverage, real source URLs come back
+in the response.
 
 ## Install
 
@@ -21,6 +23,7 @@ From the [`jacksunwei-plugins`](../..) marketplace:
 Pick one path; the `google-genai` SDK auto-detects which from your env.
 
 **Gemini API key (simplest, individual users):**
+
 ```bash
 export GOOGLE_API_KEY=your-key   # https://aistudio.google.com/apikey
 export GOOGLE_GENAI_USE_VERTEXAI=false
@@ -28,6 +31,7 @@ export GEMINI_WEB_MCP_MODEL=gemini-flash-latest   # optional; override to use a 
 ```
 
 **Vertex AI + ADC (enterprise / Google-internal):**
+
 ```bash
 gcloud auth application-default login
 gcloud auth application-default set-quota-project YOUR_PROJECT_ID
