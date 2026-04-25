@@ -58,10 +58,10 @@ The bot token and chat ID are set via the plugin's install prompts (see Setup). 
 
 For **standalone testing** outside Claude Code, the server also honors these env vars as fallbacks:
 
-| Variable                 | Notes                                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`     | Bot token. Also read from `~/.claude/channels/claude-approve/.env` (key=value) as a final fallback. |
-| `CLAUDE_APPROVE_CHAT_ID` | Default chat ID for `enable_telegram` if no arg is passed.                                  |
+| Variable                 | Notes                                                       |
+| ------------------------ | ----------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`     | Bot token.                                                  |
+| `CLAUDE_APPROVE_CHAT_ID` | Default chat ID for `enable_telegram` if no arg is passed.  |
 
 ## How it works
 

@@ -37,13 +37,11 @@ Bot token discovery (in order):
   1. CLAUDE_PLUGIN_OPTION_TELEGRAM_BOT_TOKEN — set by the plugin's userConfig
      prompt at install time (stored in macOS Keychain).
   2. TELEGRAM_BOT_TOKEN env var — for standalone testing outside Claude Code.
-  3. ~/.claude/channels/claude-approve/.env (KEY=VALUE format) — fallback.
 """
 
 import asyncio
 import os
 import secrets
-from pathlib import Path
 
 from aiohttp import web
 from mcp.server.fastmcp import FastMCP
@@ -51,7 +49,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 PORT = 8787
-ENV_FILE = Path.home() / ".claude" / "channels" / "claude-approve" / ".env"
 HOOK_TIMEOUT_S = 290  # leaves headroom under the 300s hook timeout in plugin.json
 
 mcp = FastMCP("claude-approve")
@@ -71,12 +68,6 @@ def _load_token() -> str | None:
     tok = os.environ.get(var)
     if tok:
       return tok
-  if not ENV_FILE.exists():
-    return None
-  for line in ENV_FILE.read_text().splitlines():
-    line = line.strip()
-    if line.startswith("TELEGRAM_BOT_TOKEN="):
-      return line.split("=", 1)[1].strip()
   return None
 
 
