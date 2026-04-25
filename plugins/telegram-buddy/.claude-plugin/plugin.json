@@ -1,6 +1,6 @@
 {
   "name": "telegram-buddy",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "Approve Claude Code permission prompts from Telegram while away from the terminal",
   "author": {
     "name": "Wei (Jack) Sun"
@@ -51,8 +51,8 @@
         "matcher": ".*",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://localhost:8787/approve",
+            "type": "command",
+            "command": "curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8787/approve 2>/dev/null || echo '{}'",
             "timeout": 28800
           }
         ]
@@ -63,8 +63,8 @@
         "matcher": ".*",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://localhost:8787/posttooluse",
+            "type": "command",
+            "command": "curl -s -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8787/posttooluse 2>/dev/null || true",
             "timeout": 30,
             "async": true
           }
