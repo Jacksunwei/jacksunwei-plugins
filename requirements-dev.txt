@@ -13,6 +13,6 @@
 #   # then point your IDE at .venv/bin/python
 
 google-genai>=1.73.0          # gemini-web
-mcp[cli]>=1.27.0              # gemini-web, claude-approve
-aiohttp>=3.9                  # claude-approve
-python-telegram-bot>=21.0     # claude-approve
+mcp[cli]>=1.27.0              # gemini-web, telegram-buddy
+aiohttp>=3.9                  # telegram-buddy
+python-telegram-bot>=21.0     # telegram-buddy

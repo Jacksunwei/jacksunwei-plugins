@@ -1,12 +1,12 @@
 {
-  "name": "claude-approve",
-  "version": "0.3.1",
+  "name": "telegram-buddy",
+  "version": "0.4.0",
   "description": "Approve Claude Code permission prompts from Telegram while away from the terminal",
   "author": {
     "name": "Wei (Jack) Sun"
   },
   "license": "Apache-2.0",
-  "homepage": "https://github.com/jacksunwei/jacksunwei-plugins/tree/main/plugins/claude-approve",
+  "homepage": "https://github.com/jacksunwei/jacksunwei-plugins/tree/main/plugins/telegram-buddy",
   "repository": "https://github.com/jacksunwei/jacksunwei-plugins",
   "keywords": [
     "mcp",
@@ -32,7 +32,7 @@
     }
   },
   "mcpServers": {
-    "claude-approve": {
+    "telegram-buddy": {
       "command": "uv",
       "args": [
         "run",
@@ -41,7 +41,7 @@
       ],
       "env": {
         "TELEGRAM_BOT_TOKEN": "${user_config.telegram_bot_token}",
-        "CLAUDE_APPROVE_CHAT_ID": "${user_config.chat_id}"
+        "TELEGRAM_BUDDY_CHAT_ID": "${user_config.chat_id}"
       }
     }
   },

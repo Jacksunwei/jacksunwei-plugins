@@ -23,7 +23,7 @@
 """MCP server that routes Claude Code permission prompts to Telegram.
 
 Tools:
-  - enable_telegram(chat_id?): bind 127.0.0.1:8787 + start Telegram poll
+  - enable_telegram(): bind 127.0.0.1:8787 + start Telegram poll
   - disable_telegram(): stop both
   - status(): report current state
 
@@ -57,7 +57,7 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 PORT = 8787
 HOOK_TIMEOUT_S = 290  # leaves headroom under the 300s hook timeout in plugin.json
 
-mcp = FastMCP("claude-approve")
+mcp = FastMCP("telegram-buddy")
 
 state: dict = {
     "enabled": False,
@@ -190,9 +190,9 @@ async def enable_telegram() -> str:
   permissions allowlist) is relayed to your phone as an inline-keyboard
   message; tap Approve or Deny to decide. Allowlisted calls run silently.
 
-  The destination chat is taken from the CLAUDE_APPROVE_CHAT_ID env var,
+  The destination chat is taken from the TELEGRAM_BUDDY_CHAT_ID env var,
   which inside Claude Code is populated by the userConfig prompt at install
-  time (managed via /plugin → claude-approve → Configure options).
+  time (managed via /plugin → telegram-buddy → Configure options).
 
   Returns:
     Status string. Errors if port is already bound (another session holds
@@ -201,17 +201,17 @@ async def enable_telegram() -> str:
   if state["enabled"]:
     return f"Already enabled (chat_id={state['chat_id']}). Call disable_telegram first."
 
-  chat_id = os.environ.get("CLAUDE_APPROVE_CHAT_ID")
+  chat_id = os.environ.get("TELEGRAM_BUDDY_CHAT_ID")
   if not chat_id:
     return (
-        "No chat_id. Reconfigure the plugin (`/plugin` → claude-approve → "
+        "No chat_id. Reconfigure the plugin (`/plugin` → telegram-buddy → "
         "Configure options) to set the Telegram Chat ID."
     )
 
   token = _load_token()
   if not token:
     return (
-        "No bot token. Reconfigure the plugin (`/plugin` → claude-approve → "
+        "No bot token. Reconfigure the plugin (`/plugin` → telegram-buddy → "
         "Configure options) to set the Telegram Bot Token, or set the "
         "TELEGRAM_BOT_TOKEN env var for standalone testing."
     )

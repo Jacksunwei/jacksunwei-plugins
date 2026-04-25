@@ -1,4 +1,4 @@
-# claude-approve
+# telegram-buddy
 
 Approve Claude Code permission prompts from Telegram, so a long-running session can keep moving while you're away from
 the terminal.
@@ -10,7 +10,7 @@ Once installed, the daily loop is two commands.
 When you're about to step away from the terminal:
 
 ```
-/claude-approve:on
+/telegram-buddy:on
 ```
 
 (or just say to Claude: *"Enable Telegram approvals."*)
@@ -22,12 +22,12 @@ keep running silently; your phone only buzzes for things Claude would have actua
 When you're back:
 
 ```
-/claude-approve:off
+/telegram-buddy:off
 ```
 
 (or *"Disable Telegram approvals."*)
 
-Future prompts go back to the terminal. That's the whole loop. Check current state with `/claude-approve:status`.
+Future prompts go back to the terminal. That's the whole loop. Check current state with `/telegram-buddy:status`.
 
 ## Why this exists
 
@@ -49,7 +49,7 @@ From the [`jacksunwei-plugins`](../..) marketplace:
 
 ```bash
 /plugin marketplace add jacksunwei/jacksunwei-plugins
-/plugin install claude-approve@jacksunwei-plugins
+/plugin install telegram-buddy@jacksunwei-plugins
 ```
 
 Claude Code prompts for two values during install:
@@ -59,7 +59,7 @@ Claude Code prompts for two values during install:
 - **Telegram Chat ID** — your numeric Telegram user ID. Get it by messaging [@userinfobot](https://t.me/userinfobot) —
   copy the `Id` value it returns.
 
-To re-enter or change either later: `/plugin list` → claude-approve → Configure options.
+To re-enter or change either later: `/plugin list` → telegram-buddy → Configure options.
 
 > Heads-up: Claude Code v2.1.84 has a known bug where the install prompts can be skipped. If you don't see them, use the
 > `Configure options` flow above to set the values.
@@ -75,9 +75,9 @@ full name or just ask Claude in plain language.
 
 | Slash command            | MCP tool           | Direct MCP name                                               | What it does                                                                                                |
 | ------------------------ | ------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `/claude-approve:on`     | `enable_telegram`  | `mcp__plugin_claude-approve_claude-approve__enable_telegram`  | Bind `127.0.0.1:8787`, start the Telegram poller. Sends to the chat ID from your install/Configure options. |
-| `/claude-approve:off`    | `disable_telegram` | `mcp__plugin_claude-approve_claude-approve__disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                       |
-| `/claude-approve:status` | `status`           | `mcp__plugin_claude-approve_claude-approve__status`           | Show enabled/disabled, chat ID, port, pending count, decided count.                                         |
+| `/telegram-buddy:on`     | `enable_telegram`  | `mcp__plugin_telegram-buddy_telegram-buddy__enable_telegram`  | Bind `127.0.0.1:8787`, start the Telegram poller. Sends to the chat ID from your install/Configure options. |
+| `/telegram-buddy:off`    | `disable_telegram` | `mcp__plugin_telegram-buddy_telegram-buddy__disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                       |
+| `/telegram-buddy:status` | `status`           | `mcp__plugin_telegram-buddy_telegram-buddy__status`           | Show enabled/disabled, chat ID, port, pending count, decided count.                                         |
 
 Tip: add the three MCP names to `permissions.allow` in `~/.claude/settings.json` so the slash commands run silently
 instead of prompting you to approve each invocation.
@@ -106,14 +106,14 @@ call is blocked).
 ## Configuration
 
 The bot token and chat ID are set via the plugin's install prompts (see Setup). To reconfigure later: `/plugin list` →
-claude-approve → Configure options.
+telegram-buddy → Configure options.
 
 For **standalone testing** outside Claude Code, the server also honors these env vars as fallbacks:
 
 | Variable                 | Notes                                                       |
 | ------------------------ | ----------------------------------------------------------- |
 | `TELEGRAM_BOT_TOKEN`     | Bot token.                                                  |
-| `CLAUDE_APPROVE_CHAT_ID` | Chat ID for `enable_telegram` to send approval messages to. |
+| `TELEGRAM_BUDDY_CHAT_ID` | Chat ID for `enable_telegram` to send approval messages to. |
 
 ## How it works
 

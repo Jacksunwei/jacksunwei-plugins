@@ -14,8 +14,8 @@
       "description": "Gemini-powered web tools: search and URL summarization"
     },
     {
-      "name": "claude-approve",
-      "source": "./plugins/claude-approve",
+      "name": "telegram-buddy",
+      "source": "./plugins/telegram-buddy",
       "description": "Approve Claude Code permission prompts from Telegram while away from the terminal"
     }
   ]
