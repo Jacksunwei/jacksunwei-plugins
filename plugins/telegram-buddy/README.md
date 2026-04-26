@@ -74,6 +74,10 @@ From the [`jacksunwei-plugins`](../..) marketplace:
 /plugin install telegram-buddy@jacksunwei-plugins
 ```
 
+Install at **user scope**, not project scope. The bridge binds a fixed localhost port and uses your personal bot token,
+so installing per-project would collide between collaborators on the same machine and bake your token expectation into
+the project.
+
 Claude Code prompts for two values during install:
 
 - **Telegram Bot Token** — paste the token from BotFather. Stored in your macOS Keychain (or
@@ -92,11 +96,11 @@ DM your bot once (any message) — Telegram requires you to initiate before a bo
 
 ## Tool reference
 
-| Slash command            | MCP tool           | What it does                                                                                                 |
-| ------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `/telegram-buddy:on`     | `enable_telegram`  | Bind `127.0.0.1:52891`, start the Telegram poller. Sends to the chat ID from your install/Configure options. |
-| `/telegram-buddy:off`    | `disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                        |
-| `/telegram-buddy:status` | `status`           | Show enabled/polling state, current owner of the bridge, pending and decided counters.                       |
+| Slash command            | MCP tool           | What it does                                                                                   |
+| ------------------------ | ------------------ | ---------------------------------------------------------------------------------------------- |
+| `/telegram-buddy:on`     | `enable_telegram`  | Subscribe this session. First subscriber binds `127.0.0.1:52891` and hosts; the rest stand by. |
+| `/telegram-buddy:off`    | `disable_telegram` | Unsubscribe this session. Listener shuts down once the last subscriber leaves.                 |
+| `/telegram-buddy:status` | `status`           | Show local role (host/standby/off), polling state, subscriber count, pending/decided counters. |
 
 Tip: add the three MCP names (`mcp__plugin_telegram-buddy_telegram-buddy__*`) to `permissions.allow` in
 `~/.claude/settings.json` so the slash commands don't themselves trigger a prompt.
@@ -105,14 +109,17 @@ Tip: add the three MCP names (`mcp__plugin_telegram-buddy_telegram-buddy__*`) to
 
 1. **Permission-only hook.** A `PermissionRequest` HTTP hook (declared in `plugin.json`) fires *only* when Claude Code
    is about to prompt you — calls covered by `permissions.allow` are auto-approved upstream and never reach the bridge.
-1. **On-demand listener.** The MCP server only binds port 52891 when you call `enable_telegram`. Disabled = port unbound
-   = hook gets connection-refused = silent local-prompt fallback.
-1. **Telegram round-trip.** While enabled, the server forwards each prompt as an inline-keyboard message to your chat;
-   the button callback resolves the pending request and the hook returns the decision to Claude Code.
-1. **Multi-session safe.** Hooks fire from every Claude Code session on the machine, but the bridge filters by
-   `session_id` — only the session that called `/telegram-buddy:on` (the *owner*) gets routed to Telegram. Other
-   sessions silently fall back to local prompts. Calling `/telegram-buddy:on` from a second session triggers an
-   automatic handover via the bridge's `/release` endpoint.
+1. **File-based subscriptions.** `enable_telegram` writes a sentinel file under
+   `$TMPDIR/telegram-buddy/sessions/<session_id>`. The host reads this dir per request to decide whether to route, so
+   non-subscribed sessions (or sessions that disabled) silently fall back to the local prompt.
+1. **One host, many subscribers.** The first opted-in MCP server to bind `127.0.0.1:52891` becomes the host and serves
+   every subscribed session's prompts to Telegram. The rest stand by. All subscribers share the same chat ID — there's
+   only one user per install.
+1. **Auto-failover.** Standbys run a 30-second heartbeat that probes the host's `/who` endpoint; when the host's process
+   exits, the next probe finds the port free and standbys race for `bind()`. The OS picks one winner; the rest stay
+   standby for the next round. No coordination protocol needed.
+1. **Telegram round-trip.** While a host is up, the server forwards each prompt as an inline-keyboard message; the
+   button callback resolves the pending request and the hook returns the decision to Claude Code.
 
 ## Configuration
 
@@ -130,13 +137,15 @@ For standalone testing outside Claude Code, the server honors these env vars as 
 
 - **Approval timeout** (no tap within 8h) → hook returns no decision, Claude falls back to the local prompt. The
   originating session is blocked the whole time.
-- **Take-over transition.** When another session calls `/telegram-buddy:on` while you hold the bridge, ownership
-  transfers cleanly via `/release`. Polling can sit in `starting` for up to ~30s afterward while the previous owner's
-  long-poll drains — `status()` shows the live state. Sends work during this window; tap callbacks queue at Telegram
-  until polling becomes `active`.
+- **Failover lag.** When the host's MCP process exits, standbys notice on their next heartbeat tick (default 30s) and
+  one binds the port. Hooks that fire during the gap get connection-refused and fall back to the local prompt.
+- **409 Conflict on promotion.** Telegram allows one `getUpdates` consumer per token. After a host swap the previous
+  host's long-poll can hold the slot for up to ~30s; the new host's polling sits in `starting` and retries until it
+  clears. Sends work during this window; tap callbacks queue at Telegram until polling becomes `active`.
 - **Forgot to disable before closing Claude Code.** The MCP server is killed on exit, the port frees automatically, but
-  any in-flight Telegram messages with active buttons become dead-ends until something else (a new owner, a future tap)
-  forces them to expire.
+  any in-flight Telegram messages with active buttons become dead-ends until something else (a new host, a future tap)
+  forces them to expire. Stale sentinel files in `$TMPDIR/telegram-buddy/sessions/` are harmless: they only matter while
+  a host is alive to read them, and the host dies with its session.
 - **Inline-keyboard buttons in DMs only** — don't add the bot to groups.
 
 ## License

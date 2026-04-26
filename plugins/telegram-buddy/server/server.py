@@ -24,17 +24,25 @@
 """MCP server that routes Claude Code permission prompts to Telegram.
 
 Tools:
-  - enable_telegram(): bind 127.0.0.1:52891 + start Telegram poll
-  - disable_telegram(): stop both
-  - status(): report current state
+  - enable_telegram(): subscribe THIS session; bind 127.0.0.1:52891 if free
+  - disable_telegram(): unsubscribe; shut down listener if no subscribers left
+  - status(): report local role (host/standby/off) and listener state
+
+Multi-tenant model: subscriptions are persisted as one-file-per-session
+sentinels under tempfile.gettempdir()/telegram-buddy/sessions/. Whichever
+Claude Code session's MCP server binds the port becomes the "host" and routes
+every PermissionRequest whose session_id has a sentinel. Other subscribed
+sessions stand by — their MCP servers run a heartbeat task that retries the
+bind whenever the host is gone, so failover is automatic. All subscribed
+sessions share the same chat_id (from userConfig — one per user install).
 
 The plugin declares a PermissionRequest HTTP hook (in plugin.json) that POSTs
 to http://localhost:52891/approve only when Claude Code is about to prompt the
 user — i.e., calls already auto-approved by the allowlist run silently and
-never reach this server. While "enabled", the server relays each prompt to
-Telegram as an inline-keyboard message and resolves with the user's tap.
-While "disabled", the port is unbound and Claude Code falls back to its
-local prompt.
+never reach this server. While a host is up, the server relays each prompt
+to Telegram as an inline-keyboard message and resolves with the user's tap.
+While no host is bound, curl gets connection refused and Claude Code falls
+back to its local prompt.
 
 Bot token discovery: TELEGRAM_BOT_TOKEN env var. Inside Claude Code, this is
 populated by plugin.json's mcpServers.env from the userConfig prompt at
@@ -64,6 +72,11 @@ PORT = 52891
 HOOK_TIMEOUT_S = (
     28700  # leaves headroom under the 28800s (8h) hook timeout in plugin.json
 )
+# Standby retry-bind cadence. Trades failover latency vs. wakeup cost; ~30s
+# means a dead host is replaced within 30s on average for any opted-in
+# session that was already standby.
+HEARTBEAT_INTERVAL_S = 30
+
 # Crude file logging for diagnosing hook deliveries when MCP server stderr
 # is not easily reachable. Append-only; harmless if the file grows. Lives
 # in the system temp dir (tempfile.gettempdir() honors $TMPDIR — on macOS
@@ -72,6 +85,12 @@ HOOK_TIMEOUT_S = (
 # trample each other's diagnostics.
 LOG_PATH = os.path.join(tempfile.gettempdir(), f"telegram-buddy.{os.getpid()}.log")
 
+# Subscription sentinel directory. One empty file per opted-in session named
+# for its session_id. Source of truth for "should the host route this
+# session's PermissionRequest?" — survives the host MCP server dying, so a
+# new host elected via bind-race instantly knows the full subscriber set.
+SUBSCRIPTION_DIR = os.path.join(tempfile.gettempdir(), "telegram-buddy", "sessions")
+
 
 def _log(msg: str) -> None:
   try:
@@ -79,6 +98,41 @@ def _log(msg: str) -> None:
       f.write(msg.rstrip() + "\n")
   except Exception:
     pass
+
+
+# ---------- Subscription sentinels ----------
+
+
+def _sentinel_path(session_id: str) -> str:
+  return os.path.join(SUBSCRIPTION_DIR, session_id)
+
+
+def _add_subscription(session_id: str) -> None:
+  os.makedirs(SUBSCRIPTION_DIR, exist_ok=True)
+  # Empty file; presence is the entire signal.
+  open(_sentinel_path(session_id), "w").close()
+
+
+def _remove_subscription(session_id: str) -> None:
+  try:
+    os.remove(_sentinel_path(session_id))
+  except FileNotFoundError:
+    pass
+  except OSError as e:
+    _log(f"sentinel: remove({session_id}) failed: {e}")
+
+
+def _is_subscribed(session_id: str | None) -> bool:
+  if not session_id:
+    return False
+  return os.path.exists(_sentinel_path(session_id))
+
+
+def _subscriber_count() -> int:
+  try:
+    return len(os.listdir(SUBSCRIPTION_DIR))
+  except FileNotFoundError:
+    return 0
 
 
 # ---------- Message rendering ----------
@@ -204,16 +258,25 @@ class TelegramBridge:
 
   Single instance per process. MCP tools and HTTP handlers are thin wrappers
   that delegate here so the state and lifecycle stay in one place.
+
+  Multi-tenant model: any opted-in session may become the "host" by winning
+  the bind race for PORT. The host routes every PermissionRequest whose
+  session_id has a sentinel file under SUBSCRIPTION_DIR. Non-host opted-in
+  sessions act as standby — their MCP servers run a heartbeat task that
+  retries the bind whenever the host is gone, so failover is automatic.
   """
 
   def __init__(self) -> None:
+    # `enabled` now means "this process holds the listener" (i.e. is host).
+    # A standby is opted-in (own_session_id set) but not enabled.
     self.enabled: bool = False
     self.chat_id: str | None = None
-    # The Claude Code session_id that called enable_telegram. Hook payloads
-    # carry session_id; we filter so only the owning session's tool calls get
-    # routed through Telegram. Other sessions get a silent local prompt
-    # fallback (see S3 in the design table).
-    self.owner_session_id: str | None = None
+    # The Claude Code session_id this MCP process is serving. Set in enable(),
+    # cleared in disable(). Each MCP server is per-session, so this is at most
+    # one value per process. None = this process never opted in (or already
+    # disabled). Independent of host status: a standby has own_session_id
+    # set but enabled=False.
+    self.own_session_id: str | None = None
     self.http_runner: web.AppRunner | None = None
     self.tg_app: Application | None = None
     self.pending: dict[str, PendingApproval] = {}
@@ -221,10 +284,13 @@ class TelegramBridge:
     # Telegram polling lifecycle. Distinct from `enabled` (which only tracks
     # the HTTP listener) because the Telegram bot can take seconds to start
     # polling — Telegram allows one getUpdates consumer per token, and after
-    # a take-over the previous owner's long-poll can hold the slot for ~30s.
+    # a host swap the previous host's long-poll can hold the slot for ~30s.
     # Values: "idle" | "starting" | "active" | "failed".
     self.polling_state: str = "idle"
     self.polling_error: str | None = None
+    # Background task that retries bind() on a tick while we're standby.
+    # None until enable() runs as standby; cleared on promotion or disable.
+    self.heartbeat_task: asyncio.Task | None = None
 
   # ---- Telegram callback ----
 
@@ -264,14 +330,15 @@ class TelegramBridge:
     # we expect is PermissionRequestHookInput; .get()s tolerate missing fields.
     payload: PermissionRequestHookInput = await request.json()
     caller = payload.get("session_id")
-    if caller != self.owner_session_id:
-      # S3: not our session — return empty hook output so Claude Code falls
-      # back to its default permission flow (i.e., local prompt for the
-      # non-owner session). Non-owner sessions never see Telegram.
+    if not _is_subscribed(caller):
+      # Not opted in (no sentinel file for this session_id). Empty body →
+      # Claude Code falls back to the local prompt for this session. The
+      # caller may be a session that never enabled, or one that disabled but
+      # whose hook is still configured.
       return web.json_response({})
     if self.tg_app is None or self.chat_id is None:
-      # Should be unreachable while the listener is bound (enable() sets both
-      # before site.start()), but narrows types for the rest of this handler.
+      # Should be unreachable while the listener is bound (we set both before
+      # site.start()), but narrows types for the rest of this handler.
       return web.json_response({})
     rid = secrets.token_hex(3)
     fut: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -334,9 +401,9 @@ class TelegramBridge:
       _log(f"posttooluse: failed to parse json: {e}")
       return web.json_response({})
     caller = payload.get("session_id")
-    if caller != self.owner_session_id:
-      # S3: not our session — silently ignore so this hook doesn't disturb
-      # other Claude Code sessions running in parallel.
+    if not _is_subscribed(caller):
+      # Not opted in — nothing to clean up; the hook fired for an unrelated
+      # session (or one that disabled before this PostToolUse arrived).
       return web.json_response({})
     tool_name = payload.get("tool_name", "?")
     key = _input_key(tool_name, payload.get("tool_input") or {})
@@ -358,44 +425,22 @@ class TelegramBridge:
     return web.json_response({})
 
   async def handle_who(self, _request: web.Request) -> web.Response:
-    """Returns the identity of whoever currently owns the bridge.
+    """Identity of whoever currently holds the listener.
 
-    Used by other Claude Code sessions' enable_telegram (S5 take-over flow)
-    to learn who has the listener before requesting handover.
+    Used by other sessions' status / heartbeat probes to confirm the bridge
+    is up and which Claude Code session is hosting it.
     """
     return web.json_response(
         {
-            "owner_session_id": self.owner_session_id,
+            "host_session_id": self.own_session_id,
             "pid": os.getpid(),
+            "subscribers": _subscriber_count(),
         }
     )
-
-  async def handle_release(self, _request: web.Request) -> web.Response:
-    """Handover endpoint (S5): another session is taking over.
-
-    Schedules listener shutdown after the response flies so the requester
-    can immediately retry bind. The caller is trusted (localhost-only,
-    same-uid).
-    """
-
-    async def shutdown_after_response():
-      await asyncio.sleep(0.1)  # let the OK response fly first
-      await self._shutdown()
-
-    asyncio.create_task(shutdown_after_response())
-    return web.json_response({"ok": True})
 
   # ---- Lifecycle (called by MCP tools) ----
 
   async def enable(self, session_id: str) -> str:
-    if self.enabled and self.owner_session_id == session_id:
-      return f"Already enabled (chat_id={self.chat_id})."
-    if self.enabled and self.owner_session_id != session_id:
-      return (
-          "This MCP server is already bound to a different session. "
-          "Call disable_telegram first to clear local state."
-      )
-
     chat_id = os.environ.get("TELEGRAM_BUDDY_CHAT_ID")
     if not chat_id:
       return (
@@ -411,16 +456,40 @@ class TelegramBridge:
           "TELEGRAM_BOT_TOKEN env var for standalone testing."
       )
 
-    # S5 take-over: if port is held by another listener, ask it to release.
-    takeover_err = await self._ensure_port_free()
-    if takeover_err:
-      return f"Take-over failed: {takeover_err}"
+    _add_subscription(session_id)
+    self.own_session_id = session_id
 
+    if self.enabled:
+      return (
+          f"Already enabled (host). chat_id={self.chat_id} port={PORT} "
+          f"subscribers={_subscriber_count()}."
+      )
+
+    if await self._try_become_host(token):
+      return (
+          f"Enabled (host). Approvals route to chat {chat_id}. "
+          f"Listener on 127.0.0.1:{PORT}. Telegram polling starting in "
+          f"background — check status."
+      )
+
+    # Port held by another MCP server — that host will see our sentinel and
+    # route our prompts. We start a heartbeat so we promote ourselves if the
+    # current host exits.
+    self._ensure_heartbeat(token)
+    return (
+        f"Enabled (standby). Existing host on 127.0.0.1:{PORT} routes our "
+        f"prompts; we'll take over within ~{HEARTBEAT_INTERVAL_S}s if it exits."
+    )
+
+  async def _try_become_host(self, token: str) -> bool:
+    """Try to bind PORT and become the host. Returns True on success."""
+    chat_id = os.environ.get("TELEGRAM_BUDDY_CHAT_ID")
+    if not chat_id:
+      return False
     app = web.Application()
     app.router.add_post("/approve", self.handle_approve)
     app.router.add_post("/posttooluse", self.handle_posttooluse)
     app.router.add_get("/who", self.handle_who)
-    app.router.add_post("/release", self.handle_release)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", PORT)
@@ -428,34 +497,64 @@ class TelegramBridge:
       await site.start()
     except OSError as e:
       await runner.cleanup()
-      return f"Could not bind port {PORT}: {e}."
+      _log(f"bind: port held: {e}")
+      return False
 
-    # Mark enabled and store HTTP listener immediately so the new owner is
-    # visible via /who right away. Telegram polling starts in a background
-    # task — Telegram allows one getUpdates consumer per token, so after a
-    # take-over we may hit 409 Conflict for up to ~30s while the previous
-    # owner's long-poll drains. The retry loop handles that.
     self.enabled = True
     self.chat_id = str(chat_id)
-    self.owner_session_id = session_id
     self.http_runner = runner
     self.polling_state = "starting"
     self.polling_error = None
     asyncio.create_task(self._start_polling_with_retry(token))
+    # If we were running a heartbeat as standby, it's no longer needed.
+    self._stop_heartbeat()
+    return True
 
-    return (
-        f"Enabled. Approvals route to chat {chat_id}. "
-        f"Listener on 127.0.0.1:{PORT}. Telegram polling starting in "
-        f"background — check status."
-    )
+  def _ensure_heartbeat(self, token: str) -> None:
+    """Start the standby heartbeat if not already running."""
+    if self.heartbeat_task and not self.heartbeat_task.done():
+      return
+    self.heartbeat_task = asyncio.create_task(self._heartbeat_loop(token))
+
+  def _stop_heartbeat(self) -> None:
+    if self.heartbeat_task and not self.heartbeat_task.done():
+      self.heartbeat_task.cancel()
+    self.heartbeat_task = None
+
+  async def _heartbeat_loop(self, token: str) -> None:
+    """Probe /who on a tick; if the listener is gone, race to bind it.
+
+    OS-level bind() is the election mechanism — exactly one process can hold
+    the port, so the standby that races first wins and the rest see EADDRINUSE
+    and stay standby. The losing standbys remain on the heartbeat for the
+    next round.
+    """
+    base = f"http://127.0.0.1:{PORT}"
+    while self.own_session_id is not None and not self.enabled:
+      try:
+        await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+      except asyncio.CancelledError:
+        return
+      if self.own_session_id is None or self.enabled:
+        return
+      try:
+        async with ClientSession() as client:
+          async with client.get(f"{base}/who", timeout=2) as resp:
+            await resp.read()
+        continue  # listener responding → stay standby
+      except Exception:
+        pass  # listener is down → try to promote
+      if await self._try_become_host(token):
+        _log("heartbeat: promoted to host")
+        return
 
   async def _start_polling_with_retry(self, token: str, max_attempts: int = 12) -> None:
     """Start the Telegram bot, retrying on 409 Conflict.
 
-    Telegram permits exactly one getUpdates consumer per token. After a
-    take-over the previous owner's long-poll can hold the slot for up to
-    ~30s before its task notices the stop signal. We retry start_polling
-    with backoff, capped, until either we succeed or give up.
+    Telegram permits exactly one getUpdates consumer per token. After a host
+    swap the previous host's long-poll can hold the slot for up to ~30s
+    before its task notices the stop signal. We retry start_polling with
+    backoff, capped, until either we succeed or give up.
     """
     tg_app = Application.builder().token(token).build()
     tg_app.add_handler(CallbackQueryHandler(self.on_callback))
@@ -505,46 +604,45 @@ class TelegramBridge:
     _log(self.polling_error)
 
   async def disable(self, session_id: str) -> str:
-    # Case (a): we are the listener owner. Normal shutdown.
-    if self.enabled and self.owner_session_id == session_id:
+    _remove_subscription(session_id)
+    if self.own_session_id != session_id:
+      # Caller is asking us to drop a sentinel that doesn't belong to this
+      # MCP process. The sentinel is gone (above), which is the only state
+      # we own for that session_id. The host (if any) will simply stop
+      # routing for it on its next request.
+      return f"Sentinel for {session_id[:8]}… removed."
+
+    self.own_session_id = None
+    self._stop_heartbeat()
+
+    if self.enabled and _subscriber_count() == 0:
+      # Last subscriber bowed out and we're the host — nothing left to serve.
       await self._shutdown()
-      return "Disabled. Hooks will fall back to local prompts."
+      return "Disabled. Listener shut down (no remaining subscribers)."
+    if self.enabled:
+      # Other sessions still subscribed; keep hosting on their behalf until
+      # this MCP process exits or another disable empties the dir.
+      return (
+          f"Disabled for this session. Listener stays up serving "
+          f"{_subscriber_count()} other subscriber(s)."
+      )
+    return "Disabled."
 
-    # Case (b): local state inconsistent — we think we're enabled but for
-    # another session. Treat as "we were taken over" and clear local state.
-    if self.enabled and self.owner_session_id != session_id:
-      self._clear()
-      return "Local state cleared (was bound to a different session)."
-
-    # Case (c): nothing locally — but maybe a stale registration with the
-    # active listener? Check.
-    base = f"http://127.0.0.1:{PORT}"
-    try:
-      async with ClientSession() as client:
-        async with client.get(f"{base}/who", timeout=2) as resp:
-          info = await resp.json()
-        owner = info.get("owner_session_id")
-        if owner == session_id:
-          # Stale: listener thinks we own it but our state says otherwise.
-          # Send /release so it cleans up.
-          async with client.post(f"{base}/release", timeout=2) as r:
-            await r.read()
-          return "Released stale listener registration."
-        preview = (owner[:8] + "…") if owner else "?"
-        return (
-            f"Not your bridge to disable; the active listener is owned by "
-            f"another session ({preview})."
-        )
-    except Exception:
-      return "Not enabled. Nothing to do."
-
-  def status_string(self) -> str:
+  def status_string(self, current_session_id: str | None = None) -> str:
     """Local-only status — what THIS MCP server's bridge instance knows."""
+    if self.enabled:
+      role = "host"
+    elif self.own_session_id is not None:
+      role = "standby"
+    else:
+      role = "off"
     parts = [
-        f"enabled={self.enabled}",
+        f"role={role}",
+        f"subscribed={_is_subscribed(current_session_id or self.own_session_id)}",
         f"polling={self.polling_state}",
         f"chat_id={self.chat_id}",
         f"port={PORT}",
+        f"subscribers={_subscriber_count()}",
         f"pending={len(self.pending)}",
         f"decided={self.decided}",
     ]
@@ -553,28 +651,28 @@ class TelegramBridge:
     return " ".join(parts)
 
   async def status_with_listener(self, current_session_id: str | None) -> str:
-    """Local status + a probe of /who to report the actual listener owner.
+    """Local status + a probe of /who to report the actual listener host.
 
-    Useful when the caller's session may not be the owner — the local fields
-    reflect THIS MCP server, but the listener might be held by a different
-    session that took over via S5.
+    The local fields reflect THIS MCP server. The listener might be held by
+    a different session's MCP server, in which case we're a standby — /who
+    tells us who actually has the port.
     """
-    base = self.status_string()
+    base = self.status_string(current_session_id)
     listener: str
     try:
       async with ClientSession() as client:
         async with client.get(f"http://127.0.0.1:{PORT}/who", timeout=2) as resp:
           info = await resp.json()
-      owner = info.get("owner_session_id")
+      host = info.get("host_session_id")
       pid = info.get("pid")
-      if not owner:
-        mine = "no-owner"
-      elif current_session_id and owner == current_session_id:
+      if not host:
+        mine = "no-host"
+      elif current_session_id and host == current_session_id:
         mine = "yes"
       else:
         mine = "no"
-      preview = (owner[:8] + "…") if owner else "?"
-      listener = f"listener=up listener_pid={pid} listener_owner={preview} mine={mine}"
+      preview = (host[:8] + "…") if host else "?"
+      listener = f"listener=up listener_pid={pid} listener_host={preview} mine={mine}"
     except Exception:
       listener = "listener=down"
     return f"{base} | {listener}"
@@ -604,10 +702,9 @@ class TelegramBridge:
     """Free the port first, then tear down Telegram in the background.
 
     The Telegram updater's long-poll can hold the connection for ~30s
-    waiting for getUpdates to return, which previously blocked the HTTP
-    runner cleanup and made take-over (S5) flaky. Closing the listener
-    first lets the new owner bind immediately; the bot teardown trails
-    asynchronously.
+    waiting for getUpdates to return. Closing the listener first frees the
+    port so a standby's heartbeat can promote without waiting on the bot
+    teardown, which trails asynchronously.
     """
     if not self.enabled:
       return
@@ -620,15 +717,15 @@ class TelegramBridge:
     tg = self.tg_app
     self._clear()  # mark disabled before any awaits
 
-    # Free the port FIRST so the take-over requester can bind right away.
+    # Free the port FIRST so a standby's next heartbeat can bind right away.
     if runner is not None:
       try:
         await runner.cleanup()
       except Exception:
         pass
 
-    # Bot teardown can be slow (long-poll). Background it so /release returns
-    # quickly and we don't block the take-over.
+    # Bot teardown can be slow (long-poll). Background it so we don't block
+    # callers waiting on disable() / process exit.
     if tg is not None:
 
       async def _tg_shutdown():
@@ -643,54 +740,17 @@ class TelegramBridge:
       asyncio.create_task(_tg_shutdown())
 
   def _clear(self) -> None:
+    """Reset listener-related fields. Does NOT touch own_session_id /
+    heartbeat — those reflect this process's *subscription*, which is
+    independent of whether we currently host the listener (a host that loses
+    its bind via _shutdown is still a subscriber until disable() runs).
+    """
     self.enabled = False
     self.chat_id = None
-    self.owner_session_id = None
     self.http_runner = None
     self.tg_app = None
     self.polling_state = "idle"
     self.polling_error = None
-
-  async def _ensure_port_free(self) -> str | None:
-    """If port PORT is bound by another listener, ask it to release (S5).
-
-    Returns None on success (port is free or was freed). Returns an error
-    string if the existing listener doesn't respond to /release.
-    """
-    base = f"http://127.0.0.1:{PORT}"
-    try:
-      async with ClientSession() as client:
-        # /who is purely informational — log who we're displacing.
-        try:
-          async with client.get(f"{base}/who", timeout=2) as resp:
-            info = await resp.json()
-            _log(
-                f"ensure_port_free: existing listener pid={info.get('pid')}"
-                f" owner={info.get('owner_session_id')}"
-            )
-        except Exception:
-          # No listener responding on /who → port is probably free or held by
-          # something that isn't us. Either way, let the bind try report.
-          return None
-        try:
-          async with client.post(f"{base}/release", timeout=2) as resp:
-            await resp.read()
-        except Exception as e:
-          return f"Existing listener didn't accept /release: {e}"
-    except Exception as e:
-      return f"Could not contact existing listener: {e}"
-
-    # Wait for the port to actually free (the previous listener does shutdown
-    # asynchronously; OS may also leave the socket in TIME_WAIT briefly).
-    for _ in range(40):  # up to 2s
-      try:
-        _, writer = await asyncio.open_connection("127.0.0.1", PORT)
-        writer.close()
-        await writer.wait_closed()
-      except (ConnectionRefusedError, OSError):
-        return None  # port is free
-      await asyncio.sleep(0.05)
-    return f"Port {PORT} still in use after take-over request"
 
 
 # ---------- MCP wiring ----------
@@ -701,61 +761,56 @@ _bridge = TelegramBridge()
 
 @mcp.tool()
 async def enable_telegram(session_id: str) -> str:
-  """Start routing this Claude Code session's permission prompts to Telegram.
+  """Subscribe this Claude Code session to Telegram approval routing.
 
-  Multi-session safe: only THIS session's tool calls (matched by session_id
-  in the hook payload) get routed; other sessions on the same machine fall
-  back to local prompts. If another session already holds the bridge, this
-  call requests handover via the /release endpoint and takes over.
+  Multi-tenant: any number of sessions can subscribe simultaneously. Whichever
+  session's MCP server happens to bind 127.0.0.1:PORT first becomes the
+  "host" and routes every subscribed session's PermissionRequest to Telegram.
+  The other subscribed sessions stand by and auto-promote (via a 30s heartbeat
+  + bind race) if the host's process exits.
 
-  The destination chat is taken from the TELEGRAM_BUDDY_CHAT_ID env var,
-  which inside Claude Code is populated by the userConfig prompt at install
-  time (managed via /plugin → telegram-buddy → Configure options).
+  Subscription is recorded as a sentinel file under tempfile.gettempdir()/
+  telegram-buddy/sessions/<session_id>; the host reads this dir per request
+  to decide whether to route.
+
+  Destination chat comes from the TELEGRAM_BUDDY_CHAT_ID env var, populated
+  by the userConfig prompt at install (managed via /plugin → telegram-buddy
+  → Configure options). All subscribers share the same chat — there's only
+  one user per install.
 
   Args:
-    session_id: The current Claude Code session_id. The /telegram-buddy:on
-      slash command supplies this via ${CLAUDE_SESSION_ID} substitution.
-      Without it, hooks have no way to know whose session a tool call
-      belongs to and would route everything indiscriminately.
-
-  Returns:
-    Status string.
+    session_id: Current Claude Code session_id (supplied by
+      /telegram-buddy:on via ${CLAUDE_SESSION_ID}). Used as the sentinel
+      filename and matched against hook payloads' session_id at routing time.
   """
   return await _bridge.enable(session_id)
 
 
 @mcp.tool()
 async def disable_telegram(session_id: str) -> str:
-  """Stop routing approvals to Telegram for THIS session.
+  """Unsubscribe THIS session from Telegram approval routing.
 
-  Behavior depends on local state vs. the listener's actual owner (S7):
-    - Local state says we own the bridge AND we are the owner → normal
-      shutdown.
-    - Local state says we own the bridge but the listener disagrees (we
-      were taken over) → silently clear local state.
-    - Local state says we don't own anything but a listener exists → ping
-      it; if it claims us, send /release; otherwise tell the user it
-      belongs to a different session.
-    - Nothing local, no listener → "Not enabled."
+  Removes the sentinel file. If we're the host AND no other subscribers
+  remain, the listener shuts down. If other subscribers exist, we keep
+  hosting on their behalf until our MCP process exits or another disable
+  empties the dir.
 
   Args:
-    session_id: The current Claude Code session_id (supplied by the
-      /telegram-buddy:off slash command via ${CLAUDE_SESSION_ID}).
+    session_id: Current Claude Code session_id (supplied by
+      /telegram-buddy:off via ${CLAUDE_SESSION_ID}).
   """
   return await _bridge.disable(session_id)
 
 
 @mcp.tool()
 async def status(session_id: str | None = None) -> str:
-  """Report local bridge state plus a probe of who actually owns the listener.
+  """Report local bridge state plus a probe of the actual listener host.
 
-  The local fields (enabled / polling / chat_id / pending / decided) reflect
-  THIS MCP server's state. The trailing `listener=...` segment is the result
-  of a live GET /who against 127.0.0.1:52891, so it shows the actual current
-  owner even if our local state is stale (e.g. we were taken over by another
-  session). If `session_id` is supplied (the /telegram-buddy:status slash
-  command passes it via ${CLAUDE_SESSION_ID}), `mine=yes/no` tells you at a
-  glance whether the bridge belongs to your session.
+  Local fields (role / subscribed / polling / chat_id / port / subscribers /
+  pending / decided) reflect THIS MCP server. The trailing `listener=...`
+  segment is a live GET /who against 127.0.0.1:PORT, so it shows the actual
+  current host even if we're a standby. With `session_id` supplied, `mine=
+  yes/no` tells you whether your session is the one hosting.
   """
   return await _bridge.status_with_listener(session_id)
 
