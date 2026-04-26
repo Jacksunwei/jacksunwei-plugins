@@ -24,12 +24,12 @@
 """MCP server that routes Claude Code permission prompts to Telegram.
 
 Tools:
-  - enable_telegram(): bind 127.0.0.1:8787 + start Telegram poll
+  - enable_telegram(): bind 127.0.0.1:52891 + start Telegram poll
   - disable_telegram(): stop both
   - status(): report current state
 
 The plugin declares a PermissionRequest HTTP hook (in plugin.json) that POSTs
-to http://localhost:8787/approve only when Claude Code is about to prompt the
+to http://localhost:52891/approve only when Claude Code is about to prompt the
 user — i.e., calls already auto-approved by the allowlist run silently and
 never reach this server. While "enabled", the server relays each prompt to
 Telegram as an inline-keyboard message and resolves with the user's tap.
@@ -60,7 +60,7 @@ from mcp.server.fastmcp import FastMCP
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
-PORT = 8787
+PORT = 52891
 HOOK_TIMEOUT_S = (
     28700  # leaves headroom under the 28800s (8h) hook timeout in plugin.json
 )
@@ -751,7 +751,7 @@ async def status(session_id: str | None = None) -> str:
 
   The local fields (enabled / polling / chat_id / pending / decided) reflect
   THIS MCP server's state. The trailing `listener=...` segment is the result
-  of a live GET /who against 127.0.0.1:8787, so it shows the actual current
+  of a live GET /who against 127.0.0.1:52891, so it shows the actual current
   owner even if our local state is stale (e.g. we were taken over by another
   session). If `session_id` is supplied (the /telegram-buddy:status slash
   command passes it via ${CLAUDE_SESSION_ID}), `mine=yes/no` tells you at a

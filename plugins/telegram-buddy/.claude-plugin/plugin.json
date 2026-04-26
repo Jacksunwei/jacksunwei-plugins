@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8787/approve 2>/dev/null || echo '{}'",
+            "command": "curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:52891/approve 2>/dev/null || echo '{}'",
             "timeout": 28800
           }
         ]
@@ -64,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8787/posttooluse 2>/dev/null || true",
+            "command": "curl -s -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:52891/posttooluse 2>/dev/null || true",
             "timeout": 30,
             "async": true
           }

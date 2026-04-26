@@ -92,11 +92,11 @@ DM your bot once (any message) — Telegram requires you to initiate before a bo
 
 ## Tool reference
 
-| Slash command            | MCP tool           | What it does                                                                                                |
-| ------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `/telegram-buddy:on`     | `enable_telegram`  | Bind `127.0.0.1:8787`, start the Telegram poller. Sends to the chat ID from your install/Configure options. |
-| `/telegram-buddy:off`    | `disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                       |
-| `/telegram-buddy:status` | `status`           | Show enabled/polling state, current owner of the bridge, pending and decided counters.                      |
+| Slash command            | MCP tool           | What it does                                                                                                 |
+| ------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `/telegram-buddy:on`     | `enable_telegram`  | Bind `127.0.0.1:52891`, start the Telegram poller. Sends to the chat ID from your install/Configure options. |
+| `/telegram-buddy:off`    | `disable_telegram` | Stop the listener and poller. Future prompts go back to the terminal.                                        |
+| `/telegram-buddy:status` | `status`           | Show enabled/polling state, current owner of the bridge, pending and decided counters.                       |
 
 Tip: add the three MCP names (`mcp__plugin_telegram-buddy_telegram-buddy__*`) to `permissions.allow` in
 `~/.claude/settings.json` so the slash commands don't themselves trigger a prompt.
@@ -105,7 +105,7 @@ Tip: add the three MCP names (`mcp__plugin_telegram-buddy_telegram-buddy__*`) to
 
 1. **Permission-only hook.** A `PermissionRequest` HTTP hook (declared in `plugin.json`) fires *only* when Claude Code
    is about to prompt you — calls covered by `permissions.allow` are auto-approved upstream and never reach the bridge.
-1. **On-demand listener.** The MCP server only binds port 8787 when you call `enable_telegram`. Disabled = port unbound
+1. **On-demand listener.** The MCP server only binds port 52891 when you call `enable_telegram`. Disabled = port unbound
    = hook gets connection-refused = silent local-prompt fallback.
 1. **Telegram round-trip.** While enabled, the server forwards each prompt as an inline-keyboard message to your chat;
    the button callback resolves the pending request and the hook returns the decision to Claude Code.
