@@ -6,10 +6,12 @@ API, Vertex AI, Bedrock, third-party Anthropic providers).
 
 ## Plugins
 
-| Plugin                                        | What it does                                                                                                                      |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| [`gemini-web`](./plugins/gemini-web/)         | **Real Google Search inside Claude Code, with cited sources** — via Gemini's `google_search` grounding + multi-URL summarization. |
-| [`telegram-buddy`](./plugins/telegram-buddy/) | **Approve Claude Code permission prompts from your phone** — routes prompts to a Telegram chat while you're away from the desk.   |
+| Plugin                                        | Tool               | What it does                                                                                            |
+| --------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------- |
+| [`gemini-web`](./plugins/gemini-web/)         | `web_search`       | Google Search via Gemini's `google_search` grounding — synthesized answer with cited source URLs.       |
+|                                               | `summarize_pages`  | Fetch and synthesize up to 20 URLs in one call — HTML, PDF, JSON, plain text, images (≤34 MB each).     |
+|                                               | `generate_image`   | Text-to-image via Gemini's Nano Banana model (`gemini-3.1-flash-image-preview`), saved to your project. |
+| [`telegram-buddy`](./plugins/telegram-buddy/) | (approval routing) | Route Claude Code permission prompts to a Telegram chat while you're away from the desk.                |
 
 ## Install
 

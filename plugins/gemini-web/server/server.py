@@ -24,6 +24,7 @@
 Currently exposes:
   - web_search: web search via Gemini's google_search grounding
   - summarize_pages: summarize one or more pages via Gemini's url_context tool
+  - generate_image: text-to-image via Gemini's "Nano Banana" image model
 
 Auth is resolved by the google-genai SDK from the environment:
   - Vertex AI mode: GOOGLE_GENAI_USE_VERTEXAI=true + GOOGLE_CLOUD_PROJECT
@@ -31,10 +32,17 @@ Auth is resolved by the google-genai SDK from the environment:
   - Gemini API mode: GOOGLE_API_KEY=<key>
 
 Plugin-specific env:
-  GEMINI_WEB_MCP_MODEL     Model ID (default: gemini-flash-latest)
+  GEMINI_WEB_MCP_MODEL        Model ID for web_search / summarize_pages
+                              (default: gemini-flash-latest). Must support
+                              both google_search grounding and url_context.
+  GEMINI_WEB_MCP_IMAGE_MODEL  Model ID for generate_image
+                              (default: gemini-3.1-flash-image-preview, a.k.a.
+                              Nano Banana 2). Must support image output.
 """
 
 import os
+import time
+from pathlib import Path
 
 from google import genai
 from google.genai import types
@@ -43,6 +51,9 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("gemini-web")
 
 MODEL = os.environ.get("GEMINI_WEB_MCP_MODEL", "gemini-flash-latest")
+IMAGE_MODEL = os.environ.get(
+    "GEMINI_WEB_MCP_IMAGE_MODEL", "gemini-3.1-flash-image-preview"
+)
 
 client = genai.Client()
 
@@ -141,6 +152,68 @@ async def summarize_pages(urls: list[str], focus: str | None = None) -> str:
       parts.append(f"- {url} ({status})")
 
   return "\n".join(parts) if parts else "No results found."
+
+
+@mcp.tool()
+async def generate_image(prompt: str, output_path: str | None = None) -> str:
+  """Generate an image from a text prompt using Gemini's "Nano Banana" image model.
+
+  Defaults to `gemini-3.1-flash-image-preview` (Nano Banana 2) — a native
+  multimodal image model with strong prompt adherence, in-image text
+  rendering, and up to 4K output. Every image carries an invisible SynthID
+  watermark.
+
+  Be specific in the prompt: subject, style, composition, lighting, camera
+  angle, and any literal text to render. Vague prompts yield generic results.
+
+  Args:
+    prompt: Natural-language description of the image to generate.
+    output_path: Optional file path to write the image to. If omitted, saves
+      to the server's current working directory with a timestamped filename.
+      Parent directories are created if missing.
+
+  Returns:
+    Markdown text: the absolute path of the saved image, plus any commentary
+    text the model returned alongside the image.
+  """
+  response = await client.aio.models.generate_content(
+      model=IMAGE_MODEL,
+      contents=prompt,
+      config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+  )
+
+  candidate = response.candidates[0] if response.candidates else None
+  parts = candidate.content.parts if candidate and candidate.content else []
+
+  image_bytes = None
+  mime_type = "image/png"
+  text_parts = []
+  for part in parts:
+    if part.inline_data and part.inline_data.data:
+      image_bytes = part.inline_data.data
+      if part.inline_data.mime_type:
+        mime_type = part.inline_data.mime_type
+    elif part.text:
+      text_parts.append(part.text)
+
+  if not image_bytes:
+    note = "\n".join(text_parts).strip()
+    return f"No image returned. Model said: {note}" if note else "No image returned."
+
+  ext = mime_type.rsplit("/", 1)[-1] if "/" in mime_type else "png"
+  if output_path:
+    path = Path(output_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+  else:
+    path = Path.cwd() / f"gemini-image-{int(time.time())}.{ext}"
+
+  path.write_bytes(image_bytes)
+
+  out = [f"Saved image: {path}"]
+  if text_parts:
+    out.append("")
+    out.append("\n".join(text_parts).strip())
+  return "\n".join(out)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,12 @@
 # gemini-web
 
-**Real Google Search inside Claude Code, with cited sources.**
+**Real Google Search — and Nano Banana image generation — inside Claude Code, with cited sources.**
 
-A Claude Code plugin that exposes two of Gemini's grounding tools as MCP tools — `web_search` (Google Search index,
-synthesized answer + source URLs) and `summarize_pages` (fetch up to 20 URLs in one call, get back a focused synthesis).
-Drop-in replacements for Claude Code's built-in WebSearch and WebFetch with broader coverage and a one-shot multi-URL
-summary path.
+A Claude Code plugin that exposes three Gemini tools as MCP tools — `web_search` (Google Search index, synthesized
+answer + source URLs), `summarize_pages` (fetch up to 20 URLs in one call, get back a focused synthesis), and
+`generate_image` (text-to-image via Gemini's "Nano Banana" model, saved to disk). Drop-in replacements for Claude Code's
+built-in WebSearch and WebFetch with broader coverage and a one-shot multi-URL summary path — plus image generation that
+Claude Code doesn't ship at all.
 
 ## When you'd want this
 
@@ -19,6 +20,10 @@ instead of you watching Claude WebFetch them serially and stitching the results.
 
 **Reading without breaking flow.** *"Summarize this blog post"* → one tool call, one response. No copy-pasting URLs into
 the chat, no waiting for sequential fetches.
+
+**Image generation in your editor.** *"Mock up a hero banner for the README"* *"Render the architecture diagram I just
+described"* — `generate_image` calls Gemini's Nano Banana model and writes the file to your project directory, where
+Claude can pick it up with Read or your editor can preview it inline.
 
 ## Install
 
@@ -51,8 +56,13 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 # Vertex AI API must be enabled on the project.
 ```
 
-Optional: `export GEMINI_WEB_MCP_MODEL=gemini-2.5-flash` (default `gemini-flash-latest`). The model **must support both
-`google_search` grounding and the `url_context` tool** — not all Gemini variants do.
+Optional env vars:
+
+- `GEMINI_WEB_MCP_MODEL` — model for `web_search` / `summarize_pages` (default `gemini-flash-latest`). Must support both
+  `google_search` grounding and the `url_context` tool — not all Gemini variants do.
+- `GEMINI_WEB_MCP_IMAGE_MODEL` — model for `generate_image` (default `gemini-3.1-flash-image-preview`, a.k.a. Nano
+  Banana 2). Override to `gemini-2.5-flash-image` for the GA Nano Banana, or `gemini-3-pro-image-preview` for Nano
+  Banana Pro.
 
 ## Usage
 
@@ -66,12 +76,15 @@ Just ask Claude. Examples:
 
 > Pull the API spec from https://example.com/api-docs.pdf and tell me what authentication options it supports.
 
+> Generate an image of a retro 8-bit banana floating in space, save it as `assets/hero.png`.
+
 ## Tool reference
 
-| MCP tool          | What it does                                                                                                                   |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `web_search`      | Search Google via Gemini's `google_search` grounding. Returns a markdown answer followed by a `Sources:` list of cited URLs.   |
-| `summarize_pages` | Fetch and synthesize up to 20 URLs in a single Gemini call. Handles HTML, PDF, JSON, plain text, images. Optional `focus` arg. |
+| MCP tool          | What it does                                                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `web_search`      | Search Google via Gemini's `google_search` grounding. Returns a markdown answer followed by a `Sources:` list of cited URLs.           |
+| `summarize_pages` | Fetch and synthesize up to 20 URLs in a single Gemini call. Handles HTML, PDF, JSON, plain text, images. Optional `focus` arg.         |
+| `generate_image`  | Text-to-image via Gemini's Nano Banana model. Writes the PNG to `output_path` (or a timestamped file in the CWD) and returns the path. |
 
 ## Why this and not Claude Code's built-in WebSearch / WebFetch
 

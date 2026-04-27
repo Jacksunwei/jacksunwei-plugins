@@ -1,7 +1,7 @@
 {
   "name": "gemini-web",
-  "version": "0.2.0",
-  "description": "Gemini-powered web tools: search and URL summarization",
+  "version": "0.3.0",
+  "description": "Gemini-powered tools: web search, URL summarization, and Nano Banana image generation",
   "author": {
     "name": "Wei (Jack) Sun"
   },
@@ -14,7 +14,9 @@
     "vertex-ai",
     "google-search",
     "web-search",
-    "grounding"
+    "grounding",
+    "image-generation",
+    "nano-banana"
   ],
   "mcpServers": {
     "gemini-web": {

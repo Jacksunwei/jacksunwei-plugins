@@ -11,7 +11,7 @@
     {
       "name": "gemini-web",
       "source": "./plugins/gemini-web",
-      "description": "Gemini-powered web tools: search and URL summarization"
+      "description": "Gemini-powered tools: web search, URL summarization, and Nano Banana image generation"
     },
     {
       "name": "telegram-buddy",
