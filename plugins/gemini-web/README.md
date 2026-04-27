@@ -76,15 +76,19 @@ Just ask Claude. Examples:
 
 > Pull the API spec from https://example.com/api-docs.pdf and tell me what authentication options it supports.
 
-> Generate an image of a retro 8-bit banana floating in space, save it as `assets/hero.png`.
+> Generate an image of a retro 8-bit banana floating in space, save it as `/Users/me/proj/assets/hero.png`.
+
+> Take `/Users/me/Downloads/sketch.png` and turn it into a watercolor painting.
+
+> Blend these two reference photos into one scene: `/tmp/banana.jpg` and `https://example.com/spaceship.png`.
 
 ## Tool reference
 
-| MCP tool          | What it does                                                                                                                           |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `web_search`      | Search Google via Gemini's `google_search` grounding. Returns a markdown answer followed by a `Sources:` list of cited URLs.           |
-| `summarize_pages` | Fetch and synthesize up to 20 URLs in a single Gemini call. Handles HTML, PDF, JSON, plain text, images. Optional `focus` arg.         |
-| `generate_image`  | Text-to-image via Gemini's Nano Banana model. Writes the PNG to `output_path` (or a timestamped file in the CWD) and returns the path. |
+| MCP tool          | What it does                                                                                                                                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `web_search`      | Search Google via Gemini's `google_search` grounding. Returns a markdown answer followed by a `Sources:` list of cited URLs.                                                                                                                  |
+| `summarize_pages` | Fetch and synthesize up to 20 URLs in a single Gemini call. Handles HTML, PDF, JSON, plain text, images. Optional `focus` arg.                                                                                                                |
+| `generate_image`  | Text-to-image, image edit, or multi-image fusion via Gemini's Nano Banana model. Optional `input_images` (absolute paths or `http(s)://` URLs) and `output_path` (must be absolute; defaults to a timestamped file in the OS temp directory). |
 
 ## Why this and not Claude Code's built-in WebSearch / WebFetch
 

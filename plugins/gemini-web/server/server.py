@@ -3,6 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "google-genai>=1.73.0",
+#   "httpx>=0.27.0",
 #   "mcp[cli]>=1.27.0",
 # ]
 # ///
@@ -40,10 +41,13 @@ Plugin-specific env:
                               Nano Banana 2). Must support image output.
 """
 
+import mimetypes
 import os
+import tempfile
 import time
 from pathlib import Path
 
+import httpx
 from google import genai
 from google.genai import types
 from mcp.server.fastmcp import FastMCP
@@ -154,36 +158,95 @@ async def summarize_pages(urls: list[str], focus: str | None = None) -> str:
   return "\n".join(parts) if parts else "No results found."
 
 
+async def _load_image_parts(refs: list[str]) -> list[types.Part]:
+  """Load each ref (absolute path or http(s):// URL) into an inline image Part."""
+  parts: list[types.Part] = []
+  http: httpx.AsyncClient | None = None
+  try:
+    for ref in refs:
+      if ref.startswith(("http://", "https://")):
+        if http is None:
+          http = httpx.AsyncClient(follow_redirects=True, timeout=30)
+        resp = await http.get(ref)
+        resp.raise_for_status()
+        mime = (
+            (resp.headers.get("content-type") or "application/octet-stream")
+            .split(";")[0]
+            .strip()
+        )
+        parts.append(types.Part.from_bytes(data=resp.content, mime_type=mime))
+        continue
+      path = Path(ref).expanduser()
+      if not path.is_absolute():
+        raise ValueError(
+            "input_images entry must be an absolute file path or http(s):// "
+            f"URL (got: {ref})"
+        )
+      data = path.read_bytes()
+      mime, _ = mimetypes.guess_type(str(path))
+      parts.append(
+          types.Part.from_bytes(data=data, mime_type=mime or "application/octet-stream")
+      )
+  finally:
+    if http is not None:
+      await http.aclose()
+  return parts
+
+
 @mcp.tool()
-async def generate_image(prompt: str, output_path: str | None = None) -> str:
-  """Generate an image from a text prompt using Gemini's "Nano Banana" image model.
+async def generate_image(
+    prompt: str,
+    input_images: list[str] | None = None,
+    output_path: str | None = None,
+) -> str:
+  """Generate, edit, or compose an image with Gemini's "Nano Banana" image model.
 
   Defaults to `gemini-3.1-flash-image-preview` (Nano Banana 2) — a native
   multimodal image model with strong prompt adherence, in-image text
   rendering, and up to 4K output. Every image carries an invisible SynthID
   watermark.
 
+  The mode is driven by the prompt and the presence of `input_images`:
+    - text only → generate from scratch
+    - prompt + 1 image → edit, restyle, or transform that image
+    - prompt + multiple images → blend, fuse, or use as subject/style
+      references
+
   Be specific in the prompt: subject, style, composition, lighting, camera
-  angle, and any literal text to render. Vague prompts yield generic results.
+  angle, and any literal text to render.
 
   Args:
-    prompt: Natural-language description of the image to generate.
-    output_path: Optional file path to write the image to. If omitted, saves
-      to the server's current working directory with a timestamped filename.
-      Parent directories are created if missing.
+    prompt: Natural-language description of the desired output.
+    input_images: Optional reference images. Each entry is either an
+      absolute filesystem path (`~` is expanded) or a public `http(s)://`
+      URL. Relative paths are rejected. Pass screenshots, prior
+      `generate_image` outputs, or web image URLs.
+    output_path: Optional absolute file path to write the image to. Parent
+      directories are created if missing. If omitted, saves to the OS
+      temp directory with a timestamped filename. Relative paths are
+      rejected.
 
   Returns:
-    Markdown text: the absolute path of the saved image, plus any commentary
-    text the model returned alongside the image.
+    Markdown text: the absolute path of the saved image, plus any
+    commentary text the model returned alongside the image.
   """
+  resolved_out: Path | None = None
+  if output_path:
+    resolved_out = Path(output_path).expanduser()
+    if not resolved_out.is_absolute():
+      raise ValueError(f"output_path must be absolute (got: {output_path})")
+
+  contents: list = await _load_image_parts(input_images or [])
+  contents.append(prompt)
+
   response = await client.aio.models.generate_content(
       model=IMAGE_MODEL,
-      contents=prompt,
+      contents=contents,
       config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
   )
 
   candidate = response.candidates[0] if response.candidates else None
-  parts = candidate.content.parts if candidate and candidate.content else []
+  parts = (candidate.content.parts if candidate and candidate.content else []) or []
 
   image_bytes = None
   mime_type = "image/png"
@@ -201,15 +264,15 @@ async def generate_image(prompt: str, output_path: str | None = None) -> str:
     return f"No image returned. Model said: {note}" if note else "No image returned."
 
   ext = mime_type.rsplit("/", 1)[-1] if "/" in mime_type else "png"
-  if output_path:
-    path = Path(output_path).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
+  if resolved_out is not None:
+    resolved_out.parent.mkdir(parents=True, exist_ok=True)
+    out_path = resolved_out
   else:
-    path = Path.cwd() / f"gemini-image-{int(time.time())}.{ext}"
+    out_path = Path(tempfile.gettempdir()) / f"gemini-image-{int(time.time())}.{ext}"
 
-  path.write_bytes(image_bytes)
+  out_path.write_bytes(image_bytes)
 
-  out = [f"Saved image: {path}"]
+  out = [f"Saved image: {out_path}"]
   if text_parts:
     out.append("")
     out.append("\n".join(text_parts).strip())
