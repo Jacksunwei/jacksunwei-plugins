@@ -198,6 +198,8 @@ async def generate_image(
     prompt: str,
     input_images: list[str] | None = None,
     output_path: str | None = None,
+    aspect_ratio: str | None = None,
+    image_size: str | None = None,
 ) -> str:
   """Generate, edit, or compose an image with Gemini's "Nano Banana" image model.
 
@@ -225,6 +227,10 @@ async def generate_image(
       directories are created if missing. If omitted, saves to the OS
       temp directory with a timestamped filename. Relative paths are
       rejected.
+    aspect_ratio: Optional output aspect ratio, e.g. `"1:1"`, `"16:9"`,
+      `"9:16"`, `"4:3"`, `"3:4"`, `"21:9"`. Omit to let the model choose.
+    image_size: Optional output resolution tier: `"1K"` (default), `"2K"`,
+      or `"4K"`. Omit for the model default.
 
   Returns:
     Markdown text: the absolute path of the saved image, plus any
@@ -239,10 +245,20 @@ async def generate_image(
   contents: list = await _load_image_parts(input_images or [])
   contents.append(prompt)
 
+  image_config = None
+  if aspect_ratio or image_size:
+    image_config = types.ImageConfig(
+        aspect_ratio=aspect_ratio,
+        image_size=image_size,
+    )
+
   response = await client.aio.models.generate_content(
       model=IMAGE_MODEL,
       contents=contents,
-      config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+      config=types.GenerateContentConfig(
+          response_modalities=["IMAGE"],
+          image_config=image_config,
+      ),
   )
 
   candidate = response.candidates[0] if response.candidates else None
