@@ -7,10 +7,14 @@
 Three Gemini-powered MCP tools for Claude Code:
 
 - **`web_search`** — real Google Search via Gemini's grounding, with cited source URLs.
-- **`summarize_pages`** — fetch and synthesize up to 20 URLs in a single call (HTML, PDF, JSON, images — up to 34 MB each).
-- **`generate_image`** — text-to-image, image editing, and multi-image fusion via Gemini's "Nano Banana" model, saved to disk.
+- **`summarize_pages`** — fetch and synthesize up to 20 URLs in a single call (HTML, PDF, JSON, images — up to 34 MB
+  each).
+- **`generate_image`** — text-to-image, image editing, and multi-image fusion via Gemini's "Nano Banana" model, saved to
+  disk.
 
-Drop-in upgrades to Claude Code's built-in WebSearch and WebFetch — broader coverage, one-shot multi-URL synthesis — plus image generation Claude Code doesn't ship at all. Especially useful on Bedrock or Vertex Anthropic backends that don't ship a built-in WebSearch.
+Drop-in upgrades to Claude Code's built-in WebSearch and WebFetch — broader coverage, one-shot multi-URL synthesis —
+plus image generation Claude Code doesn't ship at all. Especially useful on Bedrock or Vertex Anthropic backends that
+don't ship a built-in WebSearch.
 
 ## Usage
 
@@ -41,21 +45,24 @@ From the [`jacksunwei-plugins`](../..) marketplace:
 
 ### Configure
 
-**First time:** Claude Code prompts you for the fields below right after `/plugin install`. Fill in the API key (the rest can stay blank for defaults).
+**First time:** Claude Code prompts you for the fields below right after `/plugin install`. Fill in the API key (the
+rest can stay blank for defaults).
 
 **Later:** to change any setting, run `/plugin`, select **gemini-web**, and edit its config.
 
-| Field                            | Default                          | Notes                                                                                                                                              |
-| -------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Gemini API key**               | _none_                           | Your [AI Studio key](https://aistudio.google.com/apikey). Stored in your system keychain.                                                          |
-| **Search / summarization model** | `gemini-flash-latest`            | Used by `web_search` and `summarize_pages`. Must support both `google_search` grounding and the `url_context` tool.                                |
-| **Image generation model**       | `gemini-3.1-flash-image-preview` | Nano Banana 2. Override to `gemini-2.5-flash-image` (GA Nano Banana) or `gemini-3-pro-image-preview` (Nano Banana Pro).                            |
+| Field                            | Default                          | Notes                                                                                                                   |
+| -------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Gemini API key**               | _none_                           | Your [AI Studio key](https://aistudio.google.com/apikey). Stored in your system keychain.                               |
+| **Search / summarization model** | `gemini-flash-latest`            | Used by `web_search` and `summarize_pages`. Must support both `google_search` grounding and the `url_context` tool.     |
+| **Image generation model**       | `gemini-3.1-flash-image-preview` | Nano Banana 2. Override to `gemini-2.5-flash-image` (GA Nano Banana) or `gemini-3-pro-image-preview` (Nano Banana Pro). |
 
 > Need Vertex AI or env-var auth instead? See [Advanced: env-var auth](#advanced-env-var-auth) below.
 
 ## Advanced: env-var auth
 
-If you can't (or don't want to) use the plugin UI for the API key — for example you're on Vertex AI, sharing settings across machines, or scripting installs — leave the **Gemini API key** field blank and set env vars instead. The `google-genai` SDK auto-selects the auth path from your environment:
+If you can't (or don't want to) use the plugin UI for the API key — for example you're on Vertex AI, sharing settings
+across machines, or scripting installs — leave the **Gemini API key** field blank and set env vars instead. The
+`google-genai` SDK auto-selects the auth path from your environment:
 
 **Gemini API key (individual users):**
 
