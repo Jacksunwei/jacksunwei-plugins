@@ -27,18 +27,19 @@ Currently exposes:
   - summarize_pages: summarize one or more pages via Gemini's url_context tool
   - generate_image: text-to-image via Gemini's "Nano Banana" image model
 
-Auth is resolved by the google-genai SDK from the environment:
-  - Vertex AI mode: GOOGLE_GENAI_USE_VERTEXAI=true + GOOGLE_CLOUD_PROJECT
-    (+ optional GOOGLE_CLOUD_LOCATION, defaults to us-central1) with ADC
-  - Gemini API mode: GOOGLE_API_KEY=<key>
+Auth resolution (highest precedence first):
+  1. Plugin userConfig `gemini_api_key` (env: CLAUDE_PLUGIN_OPTION_gemini_api_key)
+     → Gemini API mode with that key, vertexai forced off.
+  2. Otherwise the google-genai SDK reads the environment:
+     - Vertex AI mode: GOOGLE_GENAI_USE_VERTEXAI=true + GOOGLE_CLOUD_PROJECT
+       (+ optional GOOGLE_CLOUD_LOCATION, defaults to us-central1) with ADC
+     - Gemini API mode: GOOGLE_API_KEY=<key>
 
-Plugin-specific env:
-  GEMINI_WEB_MCP_MODEL        Model ID for web_search / summarize_pages
-                              (default: gemini-flash-latest). Must support
-                              both google_search grounding and url_context.
-  GEMINI_WEB_MCP_IMAGE_MODEL  Model ID for generate_image
-                              (default: gemini-3.1-flash-image-preview, a.k.a.
-                              Nano Banana 2). Must support image output.
+Models are configured via plugin userConfig (set in /plugin):
+  - search_model (default gemini-flash-latest) — must support both
+    google_search grounding and the url_context tool.
+  - image_model  (default gemini-3.1-flash-image-preview, a.k.a. Nano
+    Banana 2) — must support image output.
 """
 
 import mimetypes
@@ -54,12 +55,19 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("gemini-web")
 
-MODEL = os.environ.get("GEMINI_WEB_MCP_MODEL", "gemini-flash-latest")
-IMAGE_MODEL = os.environ.get(
-    "GEMINI_WEB_MCP_IMAGE_MODEL", "gemini-3.1-flash-image-preview"
-)
 
-client = genai.Client()
+def _user_config(key: str, default: str = "") -> str:
+  return os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key}", "").strip() or default
+
+
+_USER_API_KEY = _user_config("gemini_api_key")
+MODEL = _user_config("search_model", "gemini-flash-latest")
+IMAGE_MODEL = _user_config("image_model", "gemini-3.1-flash-image-preview")
+
+if _USER_API_KEY:
+  client = genai.Client(api_key=_USER_API_KEY, vertexai=False)
+else:
+  client = genai.Client()
 
 
 @mcp.tool()

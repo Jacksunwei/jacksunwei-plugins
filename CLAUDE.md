@@ -18,12 +18,14 @@ When adding a new plugin, all three files must be created and the marketplace ma
 
 ## Auth model (gemini-web)
 
-The `google-genai` SDK auto-selects the auth path from env vars — the server itself contains no auth logic:
+Auth precedence (server-side):
 
-- `GOOGLE_API_KEY` set → Gemini API mode (individual users / AI Studio key).
-- `GOOGLE_GENAI_USE_VERTEXAI=true` + `GOOGLE_CLOUD_PROJECT` + ADC → Vertex AI mode (enterprise / Google-internal).
+1. **Plugin userConfig `gemini_api_key`** (env: `CLAUDE_PLUGIN_OPTION_gemini_api_key`) — when set, the server constructs `genai.Client(api_key=..., vertexai=False)`, hard-overriding any `GOOGLE_*` env vars.
+2. **Otherwise the `google-genai` SDK auto-selects from the environment:**
+   - `GOOGLE_API_KEY` set → Gemini API mode (individual users / AI Studio key).
+   - `GOOGLE_GENAI_USE_VERTEXAI=true` + `GOOGLE_CLOUD_PROJECT` + ADC → Vertex AI mode (enterprise / Google-internal).
 
-Model is `GEMINI_WEB_MCP_MODEL` (default `gemini-flash-latest`). The model **must support both `google_search` grounding and the `url_context` tool** — not all Gemini models do.
+Models are also configured via userConfig (`search_model`, `image_model`) — defaults `gemini-flash-latest` and `gemini-3.1-flash-image-preview`. The search model **must support both `google_search` grounding and the `url_context` tool** — not all Gemini models do.
 
 ## Common commands
 

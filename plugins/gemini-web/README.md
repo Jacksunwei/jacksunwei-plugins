@@ -1,29 +1,34 @@
-# gemini-web
+# Gemini Web - Claude Code Plugin
 
-**Real Google Search — and Nano Banana image generation — inside Claude Code, with cited sources.**
+![Search, summarize, and generate — three Gemini-powered tools for Claude Code](docs/hero.png)
 
-A Claude Code plugin that exposes three Gemini tools as MCP tools — `web_search` (Google Search index, synthesized
-answer + source URLs), `summarize_pages` (fetch up to 20 URLs in one call, get back a focused synthesis), and
-`generate_image` (text-to-image via Gemini's "Nano Banana" model, saved to disk). Drop-in replacements for Claude Code's
-built-in WebSearch and WebFetch with broader coverage and a one-shot multi-URL summary path — plus image generation that
-Claude Code doesn't ship at all.
+**Real Google Search, multi-page summaries, and Nano Banana image generation — inside Claude Code.**
 
-## When you'd want this
+Three Gemini-powered MCP tools for Claude Code:
 
-**Fresh facts, with sources.** *"What's the latest version of X?"* *"Did Y change pricing this week?"* Native WebSearch
-works, but Gemini's `google_search` grounding hits the actual Google index and returns the URLs it cited — verifiable
-answers, not vibes.
+- **`web_search`** — real Google Search via Gemini's grounding, with cited source URLs.
+- **`summarize_pages`** — fetch and synthesize up to 20 URLs in a single call (HTML, PDF, JSON, images — up to 34 MB each).
+- **`generate_image`** — text-to-image, image editing, and multi-image fusion via Gemini's "Nano Banana" model, saved to disk.
 
-**Multi-URL synthesis in one call.** Comparing two release notes? Reading a doc set? `summarize_pages` takes up to 20
-URLs in a single call (HTML, PDF, JSON, plain text, images — up to 34 MB each) and returns one synthesized answer
-instead of you watching Claude WebFetch them serially and stitching the results.
+Drop-in upgrades to Claude Code's built-in WebSearch and WebFetch — broader coverage, one-shot multi-URL synthesis — plus image generation Claude Code doesn't ship at all. Especially useful on Bedrock or Vertex Anthropic backends that don't ship a built-in WebSearch.
 
-**Reading without breaking flow.** *"Summarize this blog post"* → one tool call, one response. No copy-pasting URLs into
-the chat, no waiting for sequential fetches.
+## Usage
 
-**Image generation in your editor.** *"Mock up a hero banner for the README"* *"Render the architecture diagram I just
-described"* — `generate_image` calls Gemini's Nano Banana model and writes the file to your project directory, where
-Claude can pick it up with Read or your editor can preview it inline.
+Just ask Claude. A few examples:
+
+**`web_search`:**
+
+> Use Gemini to research all the major image-generation models and compare pros and cons.
+
+**`summarize_pages`:**
+
+> Summarize key changes of the paper in \<url>.
+
+**`generate_image`:**
+
+> Generate an image of a retro 8-bit banana floating in space, save it as `/Users/me/proj/assets/hero.png`.
+
+> Take `/Users/me/Downloads/sketch.png` and turn it into a watercolor painting.
 
 ## Install
 
@@ -34,15 +39,29 @@ From the [`jacksunwei-plugins`](../..) marketplace:
 /plugin install gemini-web@jacksunwei-plugins
 ```
 
-## Auth — pick one
+### Configure
 
-The `google-genai` SDK auto-selects the path from your env vars; this plugin contains no auth code of its own.
+**First time:** Claude Code prompts you for the fields below right after `/plugin install`. Fill in the API key (the rest can stay blank for defaults).
 
-**Gemini API key (simplest, individual users):**
+**Later:** to change any setting, run `/plugin`, select **gemini-web**, and edit its config.
+
+| Field                            | Default                          | Notes                                                                                                                                              |
+| -------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Gemini API key**               | _none_                           | Your [AI Studio key](https://aistudio.google.com/apikey). Stored in your system keychain.                                                          |
+| **Search / summarization model** | `gemini-flash-latest`            | Used by `web_search` and `summarize_pages`. Must support both `google_search` grounding and the `url_context` tool.                                |
+| **Image generation model**       | `gemini-3.1-flash-image-preview` | Nano Banana 2. Override to `gemini-2.5-flash-image` (GA Nano Banana) or `gemini-3-pro-image-preview` (Nano Banana Pro).                            |
+
+> Need Vertex AI or env-var auth instead? See [Advanced: env-var auth](#advanced-env-var-auth) below.
+
+## Advanced: env-var auth
+
+If you can't (or don't want to) use the plugin UI for the API key — for example you're on Vertex AI, sharing settings across machines, or scripting installs — leave the **Gemini API key** field blank and set env vars instead. The `google-genai` SDK auto-selects the auth path from your environment:
+
+**Gemini API key (individual users):**
 
 ```bash
 export GOOGLE_API_KEY=your-key   # https://aistudio.google.com/apikey
-export GOOGLE_GENAI_USE_VERTEXAI=false   # only if you've previously set it to true
+export GOOGLE_GENAI_USE_VERTEXAI=false   # only if previously set to true
 ```
 
 **Vertex AI + ADC (enterprise / Google-internal):**
@@ -56,56 +75,7 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 # Vertex AI API must be enabled on the project.
 ```
 
-Optional env vars:
-
-- `GEMINI_WEB_MCP_MODEL` — model for `web_search` / `summarize_pages` (default `gemini-flash-latest`). Must support both
-  `google_search` grounding and the `url_context` tool — not all Gemini variants do.
-- `GEMINI_WEB_MCP_IMAGE_MODEL` — model for `generate_image` (default `gemini-3.1-flash-image-preview`, a.k.a. Nano
-  Banana 2). Override to `gemini-2.5-flash-image` for the GA Nano Banana, or `gemini-3-pro-image-preview` for Nano
-  Banana Pro.
-
-## Usage
-
-Just ask Claude. Examples:
-
-> Search the web for the latest changes in Vertex AI Gemini grounding pricing.
-
-> Summarize https://ai.google.dev/gemini-api/docs/url-context, focused on the size and content-type limits.
-
-> Compare these two release notes and highlight what's new: \<url1> \<url2>
-
-> Pull the API spec from https://example.com/api-docs.pdf and tell me what authentication options it supports.
-
-> Generate an image of a retro 8-bit banana floating in space, save it as `/Users/me/proj/assets/hero.png`.
-
-> Take `/Users/me/Downloads/sketch.png` and turn it into a watercolor painting.
-
-> Blend these two reference photos into one scene: `/tmp/banana.jpg` and `https://example.com/spaceship.png`.
-
-## Tool reference
-
-| MCP tool          | What it does                                                                                                                                                                                                                                  |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `web_search`      | Search Google via Gemini's `google_search` grounding. Returns a markdown answer followed by a `Sources:` list of cited URLs.                                                                                                                  |
-| `summarize_pages` | Fetch and synthesize up to 20 URLs in a single Gemini call. Handles HTML, PDF, JSON, plain text, images. Optional `focus` arg.                                                                                                                |
-| `generate_image`  | Text-to-image, image edit, or multi-image fusion via Gemini's Nano Banana model. Optional `input_images` (absolute paths or `http(s)://` URLs) and `output_path` (must be absolute; defaults to a timestamped file in the OS temp directory). |
-
-## Why this and not Claude Code's built-in WebSearch / WebFetch
-
-**Index coverage.** Gemini's grounding hits the live Google index, which is broader and fresher for most queries than
-Anthropic's built-in WebSearch. If Claude ever shrugs at a query, try the same words through `web_search`.
-
-**One-shot multi-URL summarization.** WebFetch fetches one URL at a time, leaving Claude to stitch results across
-multiple invocations. `summarize_pages` does fetch + synthesize in a single Gemini call with built-in
-PDF/HTML/JSON/image handling — fewer round-trips, better cross-document reasoning.
-
-**Cited sources.** Every `web_search` response ends with a `Sources:` list, so you can verify Gemini's claims rather
-than trust them.
-
-**Backend independent.** Works on AI Studio (one API key) or Vertex AI (enterprise auth). Useful if you've standardized
-on one provider for billing or quota reasons — and especially if you're driving Claude Code with a 3rd-party / Bedrock /
-Vertex Anthropic model that doesn't ship a built-in WebSearch tool, so this fills the gap rather than competing with
-one.
+If both the **Gemini API key** plugin field and `GOOGLE_*` env vars are set, the plugin field wins.
 
 ## License
 

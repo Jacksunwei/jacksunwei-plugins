@@ -1,8 +1,6 @@
-# jacksunwei-plugins
+# Wei (Jack) Sun's Claude Code Plugins
 
-A small, opinionated marketplace of Claude Code plugins by Wei (Jack) Sun. Each plugin is single-file Python that runs
-via [`uv`](https://docs.astral.sh/uv/) — minimal install footprint, works on any Claude Code backend (direct Anthropic
-API, Vertex AI, Bedrock, third-party Anthropic providers).
+A small, opinionated marketplace of Claude Code plugins by Wei (Jack) Sun — single-file Python, run via [`uv`](https://docs.astral.sh/uv/), works on any Claude Code backend.
 
 ## Plugins
 
@@ -10,7 +8,7 @@ API, Vertex AI, Bedrock, third-party Anthropic providers).
 | --------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------- |
 | [`gemini-web`](./plugins/gemini-web/)         | `web_search`       | Google Search via Gemini's `google_search` grounding — synthesized answer with cited source URLs.       |
 |                                               | `summarize_pages`  | Fetch and synthesize up to 20 URLs in one call — HTML, PDF, JSON, plain text, images (≤34 MB each).     |
-|                                               | `generate_image`   | Text-to-image via Gemini's Nano Banana model (`gemini-3.1-flash-image-preview`), saved to your project. |
+|                                               | `generate_image`   | Text-to-image, image editing, and multi-image fusion via Gemini's Nano Banana model (`gemini-3.1-flash-image-preview`), saved to your project. |
 | [`telegram-buddy`](./plugins/telegram-buddy/) | (approval routing) | Route Claude Code permission prompts to a Telegram chat while you're away from the desk.                |
 
 ## Install
