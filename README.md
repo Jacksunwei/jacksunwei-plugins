@@ -5,19 +5,20 @@ A small, opinionated marketplace of Claude Code plugins by Wei (Jack) Sun — si
 
 ## Plugins
 
-| Plugin                                        | Tool               | What it does                                                                                                                                   |
-| --------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`gemini-web`](./plugins/gemini-web/)         | `web_search`       | Google Search via Gemini's `google_search` grounding — synthesized answer with cited source URLs.                                              |
-|                                               | `summarize_pages`  | Fetch and synthesize up to 20 URLs in one call — HTML, PDF, JSON, plain text, images (≤34 MB each).                                            |
-|                                               | `generate_image`   | Text-to-image, image editing, and multi-image fusion via Gemini's Nano Banana model (`gemini-3.1-flash-image-preview`), saved to your project. |
-| [`telegram-buddy`](./plugins/telegram-buddy/) | (approval routing) | Route Claude Code permission prompts to a Telegram chat while you're away from the desk.                                                       |
+| Plugin                                | Tool              | What it does                                                                                                                                   |
+| ------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`gemini-web`](./plugins/gemini-web/) | `web_search`      | Google Search via Gemini's `google_search` grounding — synthesized answer with cited source URLs.                                              |
+|                                       | `summarize_pages` | Fetch and synthesize up to 20 URLs in one call — HTML, PDF, JSON, plain text, images (≤34 MB each).                                            |
+|                                       | `generate_image`  | Text-to-image, image editing, and multi-image fusion via Gemini's Nano Banana model (`gemini-3.1-flash-image-preview`), saved to your project. |
+
+> **Moved:** `telegram-buddy` graduated to its own repo — see
+> [Jacksunwei/claude-telegram-buddy](https://github.com/Jacksunwei/claude-telegram-buddy).
 
 ## Install
 
 ```bash
 /plugin marketplace add jacksunwei/jacksunwei-plugins
 /plugin install gemini-web@jacksunwei-plugins
-/plugin install telegram-buddy@jacksunwei-plugins
 ```
 
 See each plugin's README for auth, configuration, and usage details.

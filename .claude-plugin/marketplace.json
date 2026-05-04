@@ -5,18 +5,13 @@
   },
   "metadata": {
     "description": "Claude Code plugin marketplace curated by Wei (Jack) Sun",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "gemini-web",
       "source": "./plugins/gemini-web",
       "description": "Gemini-powered tools: web search, URL summarization, and Nano Banana image generation"
-    },
-    {
-      "name": "telegram-buddy",
-      "source": "./plugins/telegram-buddy",
-      "description": "Approve Claude Code permission prompts from Telegram while away from the terminal"
     }
   ]
 }
